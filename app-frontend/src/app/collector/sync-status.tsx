@@ -6,7 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { SyncService } from '@/services/collector/sync-service';
+import { SyncService } from '@/collector/services/sync-service';
 import NetInfo from '@react-native-community/netinfo';
 
 export default function SyncStatusScreen() {

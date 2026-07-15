@@ -1,29 +1,24 @@
 {
-  "name": "mobile-app",
+  "name": "twd-admin-backend",
   "version": "1.0.0",
-  "description": "npm install express",
-  "keywords": [],
-  "license": "ISC",
-  "author": "",
-  "type": "commonjs",
+  "description": "Water Utility Management System — REST API for the collector and consumer mobile apps",
   "main": "index.js",
+  "type": "commonjs",
+  "license": "ISC",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.7.4"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6",
-    "@types/node": "^26.1.1",
-    "nodemon": "^3.1.14",
-    "o": "^2.3.2",
-    "ts-node": "^10.9.2",
-    "typescript": "^7.0.2"
+    "nodemon": "^3.1.14"
   }
 }

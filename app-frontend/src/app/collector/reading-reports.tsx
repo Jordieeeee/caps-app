@@ -6,8 +6,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { OfflineStorage } from '@/services/collector/offline-storage';
-import { PrinterService } from '@/services/collector/printer-service';
+import { OfflineStorage } from '@/collector/services/offline-storage';
+import { PrinterService } from '@/collector/services/printer-service';
 
 interface MeterReading {
   id: string;

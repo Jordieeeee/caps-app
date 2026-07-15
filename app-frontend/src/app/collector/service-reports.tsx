@@ -6,7 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { PrinterService } from '@/services/collector/printer-service';
+import { PrinterService } from '@/collector/services/printer-service';
 
 interface Invoice {
   id: string;
