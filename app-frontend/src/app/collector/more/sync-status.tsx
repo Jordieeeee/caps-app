@@ -307,7 +307,7 @@ const styles = StyleSheet.create({
   },
   connectionCard: {
     flex: 1,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.three,
     gap: Spacing.two,
     alignItems: 'center',
@@ -325,7 +325,7 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.four,
   },
   syncSummaryCard: {
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.four,
     gap: Spacing.one,
     alignItems: 'center',
@@ -347,7 +347,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.three,
   },
   unsyncedHeaderText: {
@@ -400,7 +400,7 @@ const styles = StyleSheet.create({
   infoBox: {
     marginHorizontal: Spacing.four,
     marginBottom: Spacing.four,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.four,
     gap: Spacing.two,
   },

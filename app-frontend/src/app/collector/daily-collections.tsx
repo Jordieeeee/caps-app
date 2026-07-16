@@ -1,10 +1,11 @@
-import { Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
+import { Pressable, StyleSheet, TextInput } from 'react-native';
 import { useState } from 'react';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { newClientId } from '@/collector/services/client-id';
 import { OfflineStorage } from '@/collector/services/offline-storage';
 import { PrinterService } from '@/collector/services/printer-service';
 import { formatPeso } from '@/shared/format/currency';
@@ -14,8 +15,8 @@ import { ListEmpty } from '@/shared/components/list-states';
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { SyncBadge } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
-import { useContentInsetsWithTopSpacing } from '@/shared/hooks/use-content-insets';
-import { usePrint } from '@/shared/hooks/use-print';
+import { ScreenContainer } from '@/shared/components/screen-container';
+import { PrintButton } from '@/shared/components/print-button';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { MIN_TAP_TARGET, Radius } from '@/shared/theme/twd';
 
@@ -106,10 +107,8 @@ const mockCollections: Collection[] = [
 ];
 
 export default function DailyCollectionsScreen() {
-  const insets = useContentInsetsWithTopSpacing();
   const theme = useTheme();
   const twd = useTwdTheme();
-  const { print, printing } = usePrint();
 
   const [collections, setCollections] = useState<Collection[]>(mockCollections);
   const [selectedCollectorId, setSelectedCollectorId] = useState<string | null>(null);
@@ -167,7 +166,11 @@ export default function DailyCollectionsScreen() {
 
     setSaving(true);
     const newCollection: Collection = {
-      id: Date.now().toString(),
+      // This id is the server's primary key for the record (clientId, uniquely
+      // indexed, upserted on). It used to be `Date.now().toString()` — two
+      // collections saved in the same millisecond produced the same id, and the
+      // upsert would silently overwrite the first payment with the second.
+      id: newClientId('col'),
       collectorId: selectedCollector?.id || 'COL-001',
       accountNumber,
       accountName,
@@ -200,36 +203,28 @@ export default function DailyCollectionsScreen() {
     }
   };
 
-  // Both print paths route through usePrint: same preflight (Bluetooth off vs no
-  // printer, with a deep link to printer settings), same "the record is saved
-  // either way" reassurance, same busy state on the buttons.
-  const handlePrintReceipt = (collection: Collection) =>
-    print(() => PrinterService.printCollectionReceipt(collection));
-
-  const handlePrintDailyReport = () =>
-    print(() =>
-      PrinterService.print({
-        type: 'report',
-        title: 'DAILY COLLECTIONS REPORT',
-        content: [
-          `Date: ${new Date().toLocaleDateString()}`,
-          `Collector: ${selectedCollector?.name || 'All Collectors'}`,
-          `Total Collections: ${filteredCollections.length}`,
-          `Total Amount: ₱${totalCollected.toFixed(2)}`,
-          '--------------------------------',
-          `Cash: ₱${cashCollections.reduce((sum, c) => sum + c.amount, 0).toFixed(2)} (${cashCollections.length})`,
-          `Checks: ₱${checkCollections.reduce((sum, c) => sum + c.amount, 0).toFixed(2)} (${checkCollections.length})`,
-          `Electronic: ₱${electronicCollections.reduce((sum, c) => sum + c.amount, 0).toFixed(2)} (${electronicCollections.length})`,
-        ],
-        footer: 'End of Daily Report',
-      })
-    );
+  // Both print paths go through PrintButton, which shares one preflight, one
+  // failure dialog, and one disabled-with-a-reason treatment across every screen
+  // that prints.
+  const dailyReportJob = () =>
+    PrinterService.print({
+      type: 'report',
+      title: 'DAILY COLLECTIONS REPORT',
+      content: [
+        `Date: ${new Date().toLocaleDateString()}`,
+        `Collector: ${selectedCollector?.name || 'All Collectors'}`,
+        `Total Collections: ${filteredCollections.length}`,
+        `Total Amount: ${formatPeso(totalCollected)}`,
+        '--------------------------------',
+        `Cash: ${formatPeso(cashCollections.reduce((sum, c) => sum + c.amount, 0))} (${cashCollections.length})`,
+        `Checks: ${formatPeso(checkCollections.reduce((sum, c) => sum + c.amount, 0))} (${checkCollections.length})`,
+        `Electronic: ${formatPeso(electronicCollections.reduce((sum, c) => sum + c.amount, 0))} (${electronicCollections.length})`,
+      ],
+      footer: 'End of Daily Report',
+    });
 
   return (
-    <ScrollView
-      style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentContainerStyle={[styles.contentContainer, insets]}>
-      <ThemedView style={styles.container}>
+    <ScreenContainer>
         <ScreenHeader title="Collections" subtitle="Today's payments, cash counted as you go" />
 
         <ThemedView style={styles.collectorSelector}>
@@ -275,14 +270,11 @@ export default function DailyCollectionsScreen() {
             onPress={() => setShowAddForm(!showAddForm)}
             style={styles.actionButton}
           />
-          <TwdButton
+          <PrintButton
             label="Daily Report"
-            icon="printer"
-            variant="secondary"
-            busy={printing}
-            busyLabel="Printing…"
-            onPress={() => void handlePrintDailyReport()}
+            job={dailyReportJob}
             style={styles.actionButton}
+            accessibilityHint="Prints today's collection totals to the thermal printer"
           />
         </ThemedView>
 
@@ -488,13 +480,9 @@ export default function DailyCollectionsScreen() {
               </ThemedView>
 
               <ThemedView style={styles.cardActions}>
-                <TwdButton
+                <PrintButton
                   label="Print Receipt"
-                  icon="printer"
-                  variant="secondary"
-                  busy={printing}
-                  busyLabel="Printing…"
-                  onPress={() => void handlePrintReceipt(collection)}
+                  job={() => PrinterService.printCollectionReceipt(collection)}
                   style={styles.receiptButton}
                   accessibilityHint={`Prints a receipt for ${collection.accountName} on the thermal printer`}
                 />
@@ -502,23 +490,11 @@ export default function DailyCollectionsScreen() {
             </ThemedView>
           ))}
         </ThemedView>
-      </ThemedView>
-    </ScrollView>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollView: {
-    flex: 1,
-  },
-  contentContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  container: {
-    maxWidth: MaxContentWidth,
-    flexGrow: 1,
-  },
   collectorSelector: {
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.four,
@@ -535,7 +511,7 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.three,
     gap: Spacing.one,
     alignItems: 'center',
@@ -564,7 +540,7 @@ const styles = StyleSheet.create({
   formContainer: {
     marginHorizontal: Spacing.four,
     marginBottom: Spacing.four,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.four,
     gap: Spacing.three,
   },
@@ -573,7 +549,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.two,
   },
   inputContainer: {
-    borderRadius: Spacing.two,
+    borderRadius: Radius.field,
     padding: Spacing.three,
   },
   input: {
@@ -611,7 +587,7 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.four,
   },
   collectionCard: {
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.four,
     gap: Spacing.three,
   },

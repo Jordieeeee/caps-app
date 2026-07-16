@@ -1,5 +1,6 @@
-import { Platform } from 'react-native';
 import BlePlx from 'react-native-ble-plx';
+
+import { PrinterStore } from './printer-state';
 
 export interface PrintData {
   type: 'receipt' | 'report' | 'collection' | 'service_order';
@@ -11,6 +12,7 @@ export interface PrintData {
 export class PrinterService {
   private static bleManager: BlePlx.BleManager | null = null;
   private static connectedDevice: BlePlx.Device | null = null;
+  private static disconnectSub: BlePlx.Subscription | null = null;
   private static readonly PRINTER_SERVICE_UUID = '000018F0-0000-1000-8000-00805F9B34FB';
   private static readonly PRINTER_CHARACTERISTIC_UUID = '00002AF1-0000-1000-8000-00805F9B34FB';
 
@@ -72,31 +74,61 @@ export class PrinterService {
   // Connect to printer
   static async connectToDevice(deviceId: string): Promise<void> {
     if (!this.bleManager) {
-      throw new Error('BLE Manager not initialized');
+      this.initialize();
     }
 
+    PrinterStore.set({ status: 'connecting', deviceName: null, deviceId });
+
     try {
-      const device = await this.bleManager.connectToDevice(deviceId);
+      const device = await this.bleManager!.connectToDevice(deviceId);
       await device.discoverAllServicesAndCharacteristics();
-      
+
       this.connectedDevice = device;
-      console.log('Connected to printer:', device.name);
+
+      /**
+       * The event nobody was listening for.
+       *
+       * A BLE peripheral drops for reasons that have nothing to do with the app —
+       * the PT-210 is switched off, its battery dies, the collector walks out of
+       * range with it in a bag. Without this, `connectedDevice` stayed non-null
+       * forever and the UI kept reporting a printer that was not there.
+       */
+      this.disconnectSub?.remove();
+      this.disconnectSub = device.onDisconnected(() => {
+        this.connectedDevice = null;
+        this.disconnectSub?.remove();
+        this.disconnectSub = null;
+        PrinterStore.set({ status: 'disconnected', deviceName: null, deviceId: null });
+      });
+
+      PrinterStore.set({
+        status: 'connected',
+        deviceName: device.name ?? 'Thermal printer',
+        deviceId: device.id,
+      });
     } catch (error) {
-      console.error('Error connecting to printer:', error);
+      this.connectedDevice = null;
+      PrinterStore.set({ status: 'disconnected', deviceName: null, deviceId: null });
       throw error;
     }
   }
 
   // Disconnect from printer
   static async disconnect(): Promise<void> {
-    if (this.connectedDevice) {
+    const device = this.connectedDevice;
+    this.disconnectSub?.remove();
+    this.disconnectSub = null;
+    this.connectedDevice = null;
+    // Publish before awaiting: the connection is over as far as this app is
+    // concerned, and a cancelConnection that throws must not leave the UI showing
+    // a printer we have already stopped tracking.
+    PrinterStore.set({ status: 'disconnected', deviceName: null, deviceId: null });
+
+    if (device) {
       try {
-        await this.connectedDevice.cancelConnection();
-        this.connectedDevice = null;
-        console.log('Disconnected from printer');
-      } catch (error) {
-        console.error('Error disconnecting from printer:', error);
-        throw error;
+        await device.cancelConnection();
+      } catch {
+        // Already gone. Nothing to undo.
       }
     }
   }
@@ -278,10 +310,13 @@ export class PrinterService {
 
   // Cleanup
   static destroy(): void {
+    this.disconnectSub?.remove();
+    this.disconnectSub = null;
     if (this.bleManager) {
       this.bleManager.destroy();
       this.bleManager = null;
     }
     this.connectedDevice = null;
+    PrinterStore.set({ status: 'disconnected', deviceName: null, deviceId: null });
   }
 }

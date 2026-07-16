@@ -1,9 +1,9 @@
-import { ScrollView, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { useState } from 'react';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { PrinterService } from '@/collector/services/printer-service';
 import { formatPeso } from '@/shared/format/currency';
@@ -11,9 +11,9 @@ import { FilterChips } from '@/shared/components/filter-chips';
 import { ListEmpty } from '@/shared/components/list-states';
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { PaymentBadge } from '@/shared/components/status-badge';
-import { TwdButton } from '@/shared/components/twd-button';
-import { useContentInsetsWithTopSpacing } from '@/shared/hooks/use-content-insets';
-import { usePrint } from '@/shared/hooks/use-print';
+import { ScreenContainer } from '@/shared/components/screen-container';
+import { PrintButton } from '@/shared/components/print-button';
+import { Radius } from '@/shared/theme/twd';
 
 interface Invoice {
   id: string;
@@ -120,9 +120,7 @@ const mockInvoices: Invoice[] = [
 ];
 
 export default function ServiceReportsScreen() {
-  const insets = useContentInsetsWithTopSpacing();
   const theme = useTheme();
-  const { print, printing } = usePrint();
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(
     mockCollectionPeriods[0].id
   );
@@ -142,31 +140,26 @@ export default function ServiceReportsScreen() {
     ? invoices.filter((i) => i.status === statusFilter)
     : invoices;
 
-  const handlePrintReport = () =>
-    print(() =>
-      PrinterService.print({
-        type: 'report',
-        title: `SERVICE REPORT - ${currentPeriod.name}`,
-        content: [
-          `Period: ${currentPeriod.startDate} to ${currentPeriod.endDate}`,
-          `Total Invoices: ${currentPeriod.totalInvoices}`,
-          `Total Billed: ₱${currentPeriod.totalBilled.toFixed(2)}`,
-          `Total Collected: ₱${currentPeriod.totalCollected.toFixed(2)}`,
-          `Collection Rate: ${collectionRate.toFixed(1)}%`,
-          '--------------------------------',
-          `Billed: ${billedCount}`,
-          `Paid: ${paidCount}`,
-          `Overdue: ${overdueCount}`,
-        ],
-        footer: 'End of Service Report',
-      })
-    );
+  const printReportJob = () =>
+    PrinterService.print({
+      type: 'report',
+      title: `SERVICE REPORT - ${currentPeriod.name}`,
+      content: [
+        `Period: ${currentPeriod.startDate} to ${currentPeriod.endDate}`,
+        `Total Invoices: ${currentPeriod.totalInvoices}`,
+        `Total Billed: ${formatPeso(currentPeriod.totalBilled)}`,
+        `Total Collected: ${formatPeso(currentPeriod.totalCollected)}`,
+        `Collection Rate: ${collectionRate.toFixed(1)}%`,
+        '--------------------------------',
+        `Billed: ${billedCount}`,
+        `Paid: ${paidCount}`,
+        `Overdue: ${overdueCount}`,
+      ],
+      footer: 'End of Service Report',
+    });
 
   return (
-    <ScrollView
-      style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentContainerStyle={[styles.contentContainer, insets]}>
-      <ThemedView style={styles.container}>
+    <ScreenContainer>
         <ScreenHeader title="Reports" subtitle="Billing and collection by period" />
 
         <ThemedView style={styles.periodSelector}>
@@ -231,12 +224,11 @@ export default function ServiceReportsScreen() {
         </ThemedView>
 
         <ThemedView style={styles.actionsContainer}>
-          <TwdButton
+          <PrintButton
             label="Print Report"
-            icon="printer"
-            busy={printing}
-            busyLabel="Printing…"
-            onPress={() => void handlePrintReport()}
+            variant="primary"
+            job={printReportJob}
+            accessibilityHint="Prints this period's billing summary to the thermal printer"
           />
         </ThemedView>
 
@@ -345,23 +337,11 @@ export default function ServiceReportsScreen() {
             </ThemedView>
           ))}
         </ThemedView>
-      </ThemedView>
-    </ScrollView>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollView: {
-    flex: 1,
-  },
-  contentContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  container: {
-    maxWidth: MaxContentWidth,
-    flexGrow: 1,
-  },
   periodSelector: {
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.four,
@@ -378,7 +358,7 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     // Was Spacing.four (24) each side, eating half the tile's width on a phone.
     padding: Spacing.three,
     gap: Spacing.one,
@@ -411,7 +391,7 @@ const styles = StyleSheet.create({
   },
   statusCard: {
     flex: 1,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.three,
     gap: Spacing.one,
     alignItems: 'center',
@@ -426,7 +406,7 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.four,
   },
   invoiceCard: {
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.four,
     gap: Spacing.three,
   },

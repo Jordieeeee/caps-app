@@ -1,7 +1,9 @@
 import { Redirect } from 'expo-router';
+import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import CollectorTabs from '@/collector/navigation/collector-tabs';
+import { SyncService } from '@/collector/services/sync-service';
 import { useAuth } from '@/shared/auth/auth-context';
 import { SessionStatusBanner } from '@/shared/components/session-status-banner';
 
@@ -19,8 +21,28 @@ import { SessionStatusBanner } from '@/shared/components/session-status-banner';
  */
 export default function CollectorLayout() {
   const { state } = useAuth();
+  const isCollector = state.status === 'signedIn' && state.role === 'Collector';
 
-  if (state.status !== 'signedIn' || state.role !== 'Collector') {
+  /**
+   * Start opportunistic sync for the life of the collector session.
+   *
+   * `startSyncMonitoring` existed and was never called from anywhere, which meant
+   * records left this phone only when a collector went looking for the Sync screen
+   * and tapped a button — while the More screen told them "your work syncs as you
+   * go". Mounted here rather than in a screen because the collector shell is the
+   * only thing that lives as long as the session does; a screen-level effect would
+   * stop syncing the moment they switched tabs.
+   *
+   * Scoped to the Collector role: a consumer session has no outbox, and the
+   * consumer path is deliberately not offline-tolerant.
+   */
+  useEffect(() => {
+    if (!isCollector) return;
+    SyncService.startSyncMonitoring();
+    return () => SyncService.stopSyncMonitoring();
+  }, [isCollector]);
+
+  if (!isCollector) {
     return <Redirect href="/" />;
   }
 

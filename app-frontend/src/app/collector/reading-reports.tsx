@@ -1,19 +1,19 @@
-import { ScrollView, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import { StyleSheet, View } from 'react-native';
 import { useState } from 'react';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { Spacing } from '@/constants/theme';
 import { PrinterService } from '@/collector/services/printer-service';
 import { FilterChips } from '@/shared/components/filter-chips';
 import { ListEmpty } from '@/shared/components/list-states';
+import { PrintButton } from '@/shared/components/print-button';
+import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { SyncBadge } from '@/shared/components/status-badge';
-import { TwdButton } from '@/shared/components/twd-button';
-import { useContentInsetsWithTopSpacing } from '@/shared/hooks/use-content-insets';
-import { usePrint } from '@/shared/hooks/use-print';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
+import { Radius } from '@/shared/theme/twd';
 
 interface MeterReading {
   id: string;
@@ -81,10 +81,8 @@ const mockReadings: MeterReading[] = [
 ];
 
 export default function ReadingReportsScreen() {
-  const insets = useContentInsetsWithTopSpacing();
-  const theme = useTheme();
   const twd = useTwdTheme();
-  const { print, printing } = usePrint();
+  const router = useRouter();
 
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [readings] = useState<MeterReading[]>(mockReadings);
@@ -99,28 +97,26 @@ export default function ReadingReportsScreen() {
   const unsyncedCount = filteredReadings.length - syncedCount;
 
   return (
-    <ScrollView
-      style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentContainerStyle={[styles.contentContainer, insets]}>
-      <ThemedView style={styles.container}>
-        <ScreenHeader title="Readings" subtitle="Meter readings by route" />
+    <ScreenContainer>
+      <ScreenHeader title="Readings" subtitle="Meter readings by route" />
 
-        <ThemedView style={styles.routeSelector}>
-          <ThemedText type="defaultBold" style={styles.sectionTitle}>
-            Route
-          </ThemedText>
-          <FilterChips
-            chips={mockRoutes.map((r) => ({ id: r.id, label: r.name }))}
-            selectedId={selectedRouteId}
-            onSelect={setSelectedRouteId}
-            allLabel="All Routes"
-            accessibilityLabel="Filter readings by route"
-          />
-        </ThemedView>
+      <ScreenSection gap={Spacing.two}>
+        <ThemedText type="defaultBold" style={styles.sectionTitle}>
+          Route
+        </ThemedText>
+        <FilterChips
+          chips={mockRoutes.map((r) => ({ id: r.id, label: r.name }))}
+          selectedId={selectedRouteId}
+          onSelect={setSelectedRouteId}
+          allLabel="All Routes"
+          accessibilityLabel="Filter readings by route"
+        />
+      </ScreenSection>
 
-        {/* 2×2, not four across: four tiles in one row left each number ~60px of
-            width, and these carry values like "1,285 m³". */}
-        <ThemedView style={styles.summaryContainer}>
+      {/* 2×2, not four across: four tiles in one row left each number ~60px of
+          width, and these carry values like "1,285 m³". */}
+      <ScreenSection>
+        <View style={styles.summaryContainer}>
           <ThemedView type="backgroundElement" style={styles.summaryCard}>
             <ThemedText type="small" themeColor="textSecondary">
               Readings
@@ -153,39 +149,38 @@ export default function ReadingReportsScreen() {
               {unsyncedCount}
             </ThemedText>
           </ThemedView>
-        </ThemedView>
+        </View>
+      </ScreenSection>
 
-        <ThemedView style={styles.actionsContainer}>
-          <TwdButton
-            label="Print Report"
-            icon="printer"
-            busy={printing}
-            busyLabel="Printing…"
-            onPress={() =>
-              void print(() =>
-                PrinterService.printReadingReport(filteredReadings, selectedRoute?.id ?? 'ALL')
-              )
+      <ScreenSection>
+        <PrintButton
+          label="Print Report"
+          variant="primary"
+          job={() => PrinterService.printReadingReport(filteredReadings, selectedRoute?.id ?? 'ALL')}
+          accessibilityHint="Prints the readings shown to the thermal printer"
+        />
+      </ScreenSection>
+
+      <ScreenSection>
+        <ThemedText type="defaultBold" style={styles.sectionTitle}>
+          Meter Readings
+        </ThemedText>
+
+        {filteredReadings.length === 0 && (
+          // The empty state carries the next action, not just an illustration —
+          // a collector standing at their first meter of the day should be able to
+          // start from here rather than hunting for the entry point.
+          <ListEmpty
+            icon="gauge"
+            title="No readings for this route yet"
+            body={
+              selectedRoute
+                ? `Nothing recorded on ${selectedRoute.name} today. Readings you record are saved on this phone straight away, with or without signal.`
+                : 'Nothing recorded yet today. Readings you record are saved on this phone straight away, with or without signal.'
             }
-            accessibilityHint="Prints the readings shown to the thermal printer"
+            action={{ label: 'Record your first reading', onPress: () => router.push('/collector') }}
           />
-        </ThemedView>
-
-        <ThemedView style={styles.readingsWrapper}>
-          <ThemedText type="defaultBold" style={styles.sectionTitle}>
-            Meter Readings
-          </ThemedText>
-
-          {filteredReadings.length === 0 && (
-            <ListEmpty
-              icon="gauge"
-              title="No readings for this route yet"
-              body={
-                selectedRoute
-                  ? `Nothing recorded on ${selectedRoute.name} today. Readings you record are saved on this phone straight away, with or without signal.`
-                  : 'Nothing recorded yet today. Readings you record are saved on this phone straight away, with or without signal.'
-              }
-            />
-          )}
+        )}
 
           {filteredReadings.map((reading) => (
             <ThemedView key={reading.id} type="backgroundElement" style={styles.readingCard}>
@@ -228,44 +223,25 @@ export default function ReadingReportsScreen() {
                 </ThemedText>
               </ThemedView>
             </ThemedView>
-          ))}
-        </ThemedView>
-      </ThemedView>
-    </ScrollView>
+        ))}
+      </ScreenSection>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollView: {
-    flex: 1,
-  },
-  contentContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  container: {
-    maxWidth: MaxContentWidth,
-    flexGrow: 1,
-  },
-  routeSelector: {
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
-  },
   sectionTitle: {
     fontSize: 16,
-    marginBottom: Spacing.two,
   },
   summaryContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.three,
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
   },
   summaryCard: {
     flexGrow: 1,
     flexBasis: '45%',
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.three,
     gap: Spacing.one,
     alignItems: 'center',
@@ -278,17 +254,8 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     fontWeight: '700',
   },
-  actionsContainer: {
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
-  },
-  readingsWrapper: {
-    gap: Spacing.three,
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
-  },
   readingCard: {
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.four,
     gap: Spacing.three,
   },

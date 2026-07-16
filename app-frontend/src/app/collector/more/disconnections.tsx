@@ -13,7 +13,7 @@ import { ListEmpty } from '@/shared/components/list-states';
 import { ServiceOrderBadge } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
 import { useStackContentInsets } from '@/shared/hooks/use-content-insets';
-import { usePrint } from '@/shared/hooks/use-print';
+import { PrintButton } from '@/shared/components/print-button';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { Radius } from '@/shared/theme/twd';
 
@@ -94,7 +94,6 @@ export default function DisconnectionsScreen() {
   const insets = useStackContentInsets();
   const theme = useTheme();
   const twd = useTwdTheme();
-  const { print, printing } = usePrint();
 
   const [orders, setOrders] = useState<DisconnectionOrder[]>(mockDisconnectionOrders);
   const [selectedOrder, setSelectedOrder] = useState<DisconnectionOrder | null>(null);
@@ -154,9 +153,6 @@ export default function DisconnectionsScreen() {
       setSavingOrder(false);
     }
   };
-
-  const handlePrintReceipt = (order: DisconnectionOrder) =>
-    print(() => PrinterService.printServiceOrderReceipt({ ...order, type: 'disconnection' }));
 
   return (
     <ScrollView
@@ -419,13 +415,11 @@ export default function DisconnectionsScreen() {
               )}
 
               <ThemedView style={styles.cardActions}>
-                <TwdButton
+                <PrintButton
                   label="Print Receipt"
-                  icon="printer"
-                  variant="secondary"
-                  busy={printing}
-                  busyLabel="Printing…"
-                  onPress={() => void handlePrintReceipt(order)}
+                  job={() =>
+                    PrinterService.printServiceOrderReceipt({ ...order, type: 'disconnection' })
+                  }
                   style={styles.cardActionButton}
                   accessibilityHint={`Prints the disconnection receipt for ${order.accountName}`}
                 />
@@ -458,7 +452,7 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.three,
     gap: Spacing.one,
     alignItems: 'center',
@@ -471,7 +465,7 @@ const styles = StyleSheet.create({
   formContainer: {
     marginHorizontal: Spacing.four,
     marginBottom: Spacing.four,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.four,
     gap: Spacing.three,
   },
@@ -523,7 +517,7 @@ const styles = StyleSheet.create({
     marginTop: Spacing.four,
   },
   orderCard: {
-    borderRadius: Spacing.three,
+    borderRadius: Radius.card,
     padding: Spacing.four,
     gap: Spacing.three,
   },
@@ -547,11 +541,11 @@ const styles = StyleSheet.create({
   },
   reasonBox: {
     padding: Spacing.two,
-    borderRadius: Spacing.two,
+    borderRadius: Radius.field,
   },
   verificationBox: {
     padding: Spacing.two,
-    borderRadius: Spacing.two,
+    borderRadius: Radius.field,
   },
   cardActions: {
     flexDirection: 'row',

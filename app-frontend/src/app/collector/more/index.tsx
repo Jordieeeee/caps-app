@@ -1,16 +1,19 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback } from 'react';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth } from '@/constants/theme';
-import { PrinterService } from '@/collector/services/printer-service';
+import { usePrinter } from '@/collector/services/printer-state';
 import { SyncService } from '@/collector/services/sync-service';
+import { syncClaim, timeOfDay, type SyncClaim } from '@/collector/services/today';
 import { useAuth, useSession } from '@/shared/auth/auth-context';
 import { Icon, type IconName } from '@/shared/components/icon';
+import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
+import { ScreenHeader } from '@/shared/components/screen-header';
+import { SkeletonBlock } from '@/shared/components/skeleton';
 import { TwdButton } from '@/shared/components/twd-button';
-import { useContentInsetsWithTopSpacing } from '@/shared/hooks/use-content-insets';
+import { useAsync } from '@/shared/hooks/use-async';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
 
@@ -25,151 +28,214 @@ import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
  */
 export default function CollectorMore() {
   const { session, sync } = useSession();
+  const { state, reload } = useAsync(useCallback(() => SyncService.getSyncStatus(), []));
+  const router = useRouter();
+  const printer = usePrinter();
+
+  // An unknown count is treated as unsafe, never as zero. The one thing worse than
+  // a spurious warning is a silent sign-out that drops a shift's work.
+  const claim: SyncClaim | null = state.status === 'ready' ? syncClaim(state.data) : null;
+
+  return (
+    <ScreenContainer>
+      <ScreenHeader
+        title={session.user.name}
+        subtitle={`Collector · ${session.user.routeIds?.join(', ') || 'No routes assigned'}`}
+      />
+
+      <ScreenSection gap={Spacing.two}>
+        <NavRow
+          icon="refresh"
+          label="Sync status"
+          detail={
+            state.status === 'loading'
+              ? '…'
+              : !claim
+                ? 'Unavailable'
+                : claim.kind === 'pending'
+                  ? `${claim.count} waiting`
+                  : claim.kind === 'never'
+                    ? 'Nothing sent yet'
+                    : `Sent ${timeOfDay(claim.lastSync)}`
+          }
+          tone={!claim || claim.kind === 'pending' ? 'warning' : undefined}
+          onPress={() => router.push('/collector/more/sync-status')}
+        />
+        {/* Live, not a one-shot read. This used to call PrinterService.isConnected()
+            during render — a value that never changed after mount and never noticed
+            the PT-210 being switched off. */}
+        <NavRow
+          icon="printer"
+          label="Printer"
+          detail={
+            printer.status === 'connected'
+              ? (printer.deviceName ?? 'Connected')
+              : printer.status === 'connecting'
+                ? 'Connecting…'
+                : 'Not connected'
+          }
+          onPress={() => router.push('/collector/more/printer')}
+        />
+        <NavRow
+          icon="file-check"
+          label="Reconnections"
+          detail="Restore service"
+          onPress={() => router.push('/collector/more/reconnections')}
+        />
+        {/* Previously unreachable: disconnections.tsx had no tab trigger and no
+            link anywhere in src/. It shipped as ~300 lines of dead route. */}
+        <NavRow
+          icon="alert-triangle"
+          label="Disconnections"
+          detail="Delinquent accounts"
+          onPress={() => router.push('/collector/more/disconnections')}
+        />
+      </ScreenSection>
+
+      <ScreenSection gap={Spacing.three}>
+        <ThemedView type="backgroundElement" style={styles.card}>
+          <ThemedText type="defaultBold">Session</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {sync === 'online'
+              ? 'Connected. Records send automatically while the app is open.'
+              : sync === 'offline'
+                ? 'No connection. Your work is saved on this device.'
+                : 'Sign-in not reconfirmed. Your work is saved on this device.'}
+          </ThemedText>
+        </ThemedView>
+
+        <SignOutBlock claim={claim} loading={state.status === 'loading'} onRetry={reload} />
+      </ScreenSection>
+    </ScreenContainer>
+  );
+}
+
+/**
+ * Sign out, weighted by what it would actually cost right now.
+ *
+ * The warning used to be permanent: the same red block, with the same words, on
+ * every visit, whether the collector had forty unsent records or none. A warning
+ * that is always on is not a warning — it is wallpaper, and a collector who has
+ * scrolled past it two hundred times will scroll past it on the day it is true.
+ * That is the whole argument for making it conditional.
+ *
+ * So there are three states, and they are not cosmetic variants — they are three
+ * different claims:
+ *
+ *   pending → red, counts the records, and the confirmation repeats the count.
+ *   never   → red too. An empty outbox that has never once drained is not proof of
+ *             safety; it means nothing was ever sent from this phone, and calling
+ *             that "all clear" is the exact failure the conditional exists to stop.
+ *   sent    → neutral, low-emphasis, and *timestamped*. "All records sent · 14:32",
+ *             never a bare "Synced" — see today.ts. The app knows what it sent and
+ *             when; it cannot know that TWD still holds it, or that signal exists
+ *             this second.
+ *
+ * Unknown (claim === null) is red. Failing to read the count is not evidence there
+ * is nothing to lose.
+ */
+function SignOutBlock({
+  claim,
+  loading,
+  onRetry,
+}: {
+  claim: SyncClaim | null;
+  loading: boolean;
+  onRetry: () => void;
+}) {
+  const theme = useTwdTheme();
   const { signOut } = useAuth();
   const router = useRouter();
-  const theme = useTwdTheme();
-  const insets = useContentInsetsWithTopSpacing();
 
-  const [unsynced, setUnsynced] = useState<number | null>(null);
+  if (loading) {
+    return (
+      <View style={styles.signOutSection}>
+        <SkeletonBlock height={64} />
+        <SkeletonBlock height={MIN_TAP_TARGET} />
+      </View>
+    );
+  }
 
-  const loadUnsynced = useCallback(async () => {
-    try {
-      const status = await SyncService.getSyncStatus();
-      const { meterReadings, collections, serviceOrders } = status.unsyncedCounts;
-      setUnsynced(meterReadings + collections + serviceOrders);
-    } catch {
-      // Leave it null. An unknown count must not read as zero — see the guard in
-      // confirmSignOut, which treats null as "assume there is work at risk".
-      setUnsynced(null);
-    }
-  }, []);
+  const atRisk = claim === null || claim.kind === 'pending' || claim.kind === 'never';
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState runs only after the await; see app/collector/index.tsx
-    void loadUnsynced();
-  }, [loadUnsynced]);
+  const count = claim?.kind === 'pending' ? claim.count : null;
+  const countPhrase =
+    count === null
+      ? claim === null
+        ? 'Some records may still be saved on this phone only.'
+        : 'Nothing has been sent to TWD from this phone yet.'
+      : count === 1
+        ? '1 record hasn’t reached TWD.'
+        : `${count} records haven’t reached TWD.`;
 
-  /**
-   * Sign-out is guarded by what it would actually cost, not by a generic caution.
-   *
-   * The old screen showed one static line — "avoid signing out mid-route" — in
-   * muted grey, next to a button styled exactly like "Enroll a consumer account".
-   * That warning is the same whether the collector has zero pending records or
-   * forty, which makes it noise on the day it matters. Signing out clears secure
-   * storage; anything not yet uploaded is gone. So the dialog states the number.
-   *
-   * `unsynced === null` means the count failed to load. That is treated as unsafe
-   * rather than safe: the one thing worse than a spurious warning is a silent
-   * sign-out that drops a shift's work.
-   */
   const confirmSignOut = () => {
-    const atRisk = unsynced === null || unsynced > 0;
+    if (!atRisk && claim?.kind === 'sent') {
+      Alert.alert('Sign out?', "You'll need a connection to sign back in.", [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
+      ]);
+      return;
+    }
 
+    // The count is repeated here on purpose. The block above is glanceable; this is
+    // the last moment before the work is gone, and it should be impossible to
+    // dismiss without having read the number.
     Alert.alert(
-      atRisk ? 'Sign out and lose unsent work?' : 'Sign out?',
-      atRisk
-        ? `${
-            unsynced === null
-              ? 'Some records may still be saved on this device only.'
-              : unsynced === 1
-                ? '1 record is saved on this device and has not reached TWD.'
-                : `${unsynced} records are saved on this device and have not reached TWD.`
-          }\n\nSigning out clears this device's session and those records cannot be recovered. Connect to the internet and sync first if you can.`
-        : "Everything is synced. You'll need a connection to sign back in.",
+      count !== null ? `Sign out and lose ${count} record${count === 1 ? '' : 's'}?` : 'Sign out and lose unsent work?',
+      `${countPhrase}\n\nSigning out clears this phone's session and those records with it. They cannot be recovered. Connect to the internet and sync first if you can.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        ...(atRisk
-          ? [{ text: 'Go to Sync', onPress: () => router.push('/collector/more/sync-status') }]
-          : []),
-        { text: 'Sign out', style: 'destructive' as const, onPress: () => void signOut() },
+        { text: 'Go to Sync', onPress: () => router.push('/collector/more/sync-status') },
+        { text: 'Sign out anyway', style: 'destructive', onPress: () => void signOut() },
       ]
     );
   };
 
   return (
-    <ThemedView style={styles.root}>
-      <ScrollView contentContainerStyle={[styles.scroll, insets]}>
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <ThemedText type="subtitle">{session.user.name}</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              Collector · {session.user.routeIds?.join(', ') || 'No routes assigned'}
+    <View style={styles.signOutSection}>
+      {atRisk ? (
+        <Pressable
+          onPress={claim === null ? onRetry : () => router.push('/collector/more/sync-status')}
+          accessibilityRole="button"
+          accessibilityLabel={`${countPhrase} ${claim === null ? 'Tap to retry.' : 'Opens sync status.'}`}
+          style={({ pressed }) => [
+            styles.warning,
+            {
+              borderColor: theme.danger,
+              backgroundColor: pressed ? theme.backgroundSelected : theme.dangerSurface,
+            },
+          ]}>
+          <Icon name="alert-triangle" size={20} color={theme.danger} />
+          <View style={styles.warningText}>
+            <ThemedText type="defaultBold" style={{ color: theme.danger }}>
+              {countPhrase}
+            </ThemedText>
+            <ThemedText type="small" style={{ color: theme.danger }}>
+              Signing out clears this phone&apos;s session and deletes them. Sync before you
+              sign out.
             </ThemedText>
           </View>
-
-          <View style={styles.group}>
-            <NavRow
-              icon="refresh"
-              label="Sync status"
-              detail={
-                unsynced === null
-                  ? 'Unavailable'
-                  : unsynced === 0
-                    ? 'All records sent'
-                    : `${unsynced} waiting`
-              }
-              tone={unsynced ? 'warning' : undefined}
-              onPress={() => router.push('/collector/more/sync-status')}
-            />
-            <NavRow
-              icon="printer"
-              label="Printer"
-              detail={PrinterService.isConnected() ? 'Connected' : 'Not connected'}
-              onPress={() => router.push('/collector/more/printer')}
-            />
-            <NavRow
-              icon="file-check"
-              label="Reconnections"
-              detail="Restore service"
-              onPress={() => router.push('/collector/more/reconnections')}
-            />
-            {/* Previously unreachable: disconnections.tsx had no tab trigger and no
-                link anywhere in src/. It shipped as ~300 lines of dead route. */}
-            <NavRow
-              icon="alert-triangle"
-              label="Disconnections"
-              detail="Delinquent accounts"
-              onPress={() => router.push('/collector/more/disconnections')}
-            />
-          </View>
-
-          <ThemedView type="backgroundElement" style={styles.card}>
-            <ThemedText type="defaultBold">Session</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              {sync === 'online'
-                ? 'Connected. Your work syncs as you go.'
-                : sync === 'offline'
-                  ? 'No connection. Your work is saved on this device.'
-                  : 'Sign-in not reconfirmed. Your work is saved on this device.'}
-            </ThemedText>
-          </ThemedView>
-
-          <View style={styles.signOutSection}>
-            <View
-              style={[
-                styles.warning,
-                { borderColor: theme.danger, backgroundColor: theme.dangerSurface },
-              ]}
-              accessible
-              accessibilityRole="summary">
-              <Icon name="alert-triangle" size={20} color={theme.danger} />
-              <ThemedText type="small" style={[styles.warningText, { color: theme.danger }]}>
-                Signing out clears this device&apos;s saved session and any work that
-                hasn&apos;t reached TWD. You&apos;ll need a connection to sign back in — avoid
-                signing out mid-route.
-              </ThemedText>
-            </View>
-
-            <TwdButton
-              label="Sign out"
-              variant="danger"
-              onPress={confirmSignOut}
-              accessibilityHint="Asks you to confirm before ending your session on this device"
-            />
-          </View>
+        </Pressable>
+      ) : (
+        // Neutral, low-emphasis, timestamped. No icon, no colour, no alarm — there
+        // is nothing here to act on, and dressing it up would spend the collector's
+        // attention on good news.
+        <View style={[styles.note, { borderColor: theme.border }]} accessible accessibilityRole="summary">
+          <ThemedText type="small" themeColor="textSecondary">
+            All records sent{claim?.kind === 'sent' ? ` · ${timeOfDay(claim.lastSync)}` : ''}. You&apos;ll
+            need a connection to sign back in.
+          </ThemedText>
         </View>
-      </ScrollView>
-    </ThemedView>
+      )}
+
+      <TwdButton
+        label="Sign out"
+        icon="log-out"
+        variant="danger"
+        onPress={confirmSignOut}
+        accessibilityHint="Asks you to confirm before ending your session on this device"
+      />
+    </View>
   );
 }
 
@@ -202,20 +268,16 @@ function NavRow({ icon, label, detail, tone, onPress }: NavRowProps) {
         {label}
       </ThemedText>
       {detail && (
-        <ThemedText type="small" style={{ color: accent }}>
+        <ThemedText type="small" style={{ color: accent }} numberOfLines={1}>
           {detail}
         </ThemedText>
       )}
+      <Icon name="chevron-right" size={18} color={theme.textSecondary} />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  scroll: { flexGrow: 1, alignItems: 'center', paddingHorizontal: Spacing.four },
-  content: { width: '100%', maxWidth: MaxContentWidth, gap: Spacing.four },
-  header: { gap: Spacing.one },
-  group: { gap: Spacing.two },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -228,7 +290,7 @@ const styles = StyleSheet.create({
   },
   rowLabel: { flex: 1 },
   card: { padding: Spacing.four, borderRadius: Radius.card, gap: Spacing.two },
-  signOutSection: { gap: Spacing.three, marginTop: Spacing.two },
+  signOutSection: { gap: Spacing.three },
   warning: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -237,5 +299,10 @@ const styles = StyleSheet.create({
     borderRadius: Radius.card,
     borderWidth: 2,
   },
-  warningText: { flex: 1 },
+  warningText: { flex: 1, gap: Spacing.half },
+  note: {
+    padding: Spacing.three,
+    borderRadius: Radius.card,
+    borderWidth: 1,
+  },
 });
