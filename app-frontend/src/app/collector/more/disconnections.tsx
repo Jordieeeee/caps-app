@@ -1,22 +1,31 @@
-import { Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useState } from 'react';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { OfflineStorage } from '@/collector/services/offline-storage';
 import { PrinterService } from '@/collector/services/printer-service';
+import { formatPeso } from '@/shared/format/currency';
+import { Icon } from '@/shared/components/icon';
+import { ListEmpty } from '@/shared/components/list-states';
+import { ServiceOrderBadge } from '@/shared/components/status-badge';
+import { TwdButton } from '@/shared/components/twd-button';
+import { useStackContentInsets } from '@/shared/hooks/use-content-insets';
+import { usePrint } from '@/shared/hooks/use-print';
+import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
+import { Radius } from '@/shared/theme/twd';
 
-interface ReconnectionOrder {
+interface DisconnectionOrder {
   id: string;
   accountNumber: string;
   accountName: string;
   address: string;
-  previousBalance: number;
-  settlementAmount: number;
-  settlementDate: string;
+  outstandingBalance: number;
+  billingStatus: 'overdue' | 'delinquent';
+  authorizedBy: string;
+  authorizationDate: string;
   reason: string;
   status: 'pending' | 'completed' | 'cancelled';
   fieldVerification?: string;
@@ -25,88 +34,94 @@ interface ReconnectionOrder {
   synced: boolean;
 }
 
-const mockReconnectionOrders: ReconnectionOrder[] = [
+const mockDisconnectionOrders: DisconnectionOrder[] = [
   {
-    id: 'REC-001',
+    id: 'DIS-001',
     accountNumber: 'WD-12345',
     accountName: 'Carlos Garcia',
-    address: '123 Main Street, Springfield',
-    previousBalance: 150.00,
-    settlementAmount: 150.00,
-    settlementDate: '2025-07-14',
-    reason: 'Full payment of outstanding balance',
+    address: '24 Mabini Street, Brgy. Poblacion 3, Tanauan City',
+    outstandingBalance: 450.00,
+    billingStatus: 'delinquent',
+    authorizedBy: 'SUP-001',
+    authorizationDate: '2025-07-10',
+    reason: 'Non-payment for 3 consecutive billing periods',
     status: 'pending',
     timestamp: Date.now(),
     synced: false,
   },
   {
-    id: 'REC-002',
+    id: 'DIS-002',
     accountNumber: 'WD-12346',
     accountName: 'Ana Martinez',
-    address: '456 Oak Avenue, Springfield',
-    previousBalance: 85.50,
-    settlementAmount: 85.50,
-    settlementDate: '2025-07-13',
-    reason: 'Payment arrangement completed',
+    address: '117 J.P. Laurel Highway, Brgy. Darasa, Tanauan City',
+    outstandingBalance: 285.50,
+    billingStatus: 'overdue',
+    authorizedBy: 'SUP-001',
+    authorizationDate: '2025-07-12',
+    reason: 'Overdue payment exceeding 60 days',
     status: 'completed',
-    fieldVerification: 'Service restored successfully. Meter reading: 1450',
+    fieldVerification: 'Service disconnected. Meter sealed. Final reading: 1520',
     completionDate: '2025-07-15',
     timestamp: Date.now() - 86400000,
     synced: true,
   },
   {
-    id: 'REC-003',
+    id: 'DIS-003',
     accountNumber: 'WD-12347',
     accountName: 'Roberto Rodriguez',
-    address: '789 Pine Road, Springfield',
-    previousBalance: 200.00,
-    settlementAmount: 200.00,
-    settlementDate: '2025-07-15',
-    reason: 'Full payment including penalties',
+    address: '8 Rizal Avenue, Brgy. Sambat, Tanauan City',
+    outstandingBalance: 320.00,
+    billingStatus: 'delinquent',
+    authorizedBy: 'SUP-002',
+    authorizationDate: '2025-07-14',
+    reason: 'Non-payment for 2 consecutive billing periods',
     status: 'pending',
     timestamp: Date.now(),
     synced: false,
   },
 ];
 
-export default function ReconnectionsScreen() {
-  const safeAreaInsets = useSafeAreaInsets();
-  const insets = {
-    ...safeAreaInsets,
-    bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three,
-  };
+/**
+ * Disconnection work orders. Title comes from the navigation header.
+ *
+ * The confirm action uses the danger variant deliberately: cutting a household's
+ * water is the one thing in this app done *to* a customer, and the old filled-red
+ * "Confirm Disconnection" made the gravest action the most visually dominant
+ * element on screen — an invitation, not a caution. The outlined danger treatment
+ * matches Sign out: serious, unmistakable, not shouting.
+ */
+export default function DisconnectionsScreen() {
+  const insets = useStackContentInsets();
   const theme = useTheme();
-  
-  const [orders, setOrders] = useState<ReconnectionOrder[]>(mockReconnectionOrders);
-  const [selectedOrder, setSelectedOrder] = useState<ReconnectionOrder | null>(null);
+  const twd = useTwdTheme();
+  const { print, printing } = usePrint();
+
+  const [orders, setOrders] = useState<DisconnectionOrder[]>(mockDisconnectionOrders);
+  const [selectedOrder, setSelectedOrder] = useState<DisconnectionOrder | null>(null);
   const [showProcessForm, setShowProcessForm] = useState(false);
-  
-  // Form state
   const [fieldVerification, setFieldVerification] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
 
-  const contentPlatformStyle = Platform.select({
-    android: {
-      paddingTop: insets.top,
-      paddingLeft: insets.left,
-      paddingRight: insets.right,
-      paddingBottom: insets.bottom,
-    },
-    web: {
-      paddingTop: Spacing.six,
-      paddingBottom: Spacing.four,
-    },
-  });
+  const pendingOrders = orders.filter((o) => o.status === 'pending');
+  const completedOrders = orders.filter((o) => o.status === 'completed');
+  const totalOutstanding = orders.reduce((sum, o) => sum + o.outstandingBalance, 0);
 
-  const pendingOrders = orders.filter(o => o.status === 'pending');
-  const completedOrders = orders.filter(o => o.status === 'completed');
-  const totalSettled = orders.reduce((sum, o) => sum + o.settlementAmount, 0);
+  // Silent `return` on missing notes was a dead button — same defect, same fix,
+  // as Collections and Reconnections. For a disconnection the note matters even
+  // more: seal number and final reading are what a dispute is settled with.
+  const handleProcessDisconnection = async () => {
+    setFormError(null);
+    if (!selectedOrder) return;
 
-  const handleProcessReconnection = async () => {
-    if (!selectedOrder || !fieldVerification) {
-      return; // Validation failed
+    if (!fieldVerification.trim()) {
+      setFormError(
+        'Enter field verification notes first — final meter reading, seal number, and service condition.'
+      );
+      return;
     }
 
-    const updatedOrder: ReconnectionOrder = {
+    const updatedOrder: DisconnectionOrder = {
       ...selectedOrder,
       status: 'completed',
       fieldVerification,
@@ -114,10 +129,11 @@ export default function ReconnectionsScreen() {
       synced: false,
     };
 
+    setSavingOrder(true);
     try {
       await OfflineStorage.saveServiceOrder({
         id: updatedOrder.id,
-        type: 'reconnection',
+        type: 'disconnection',
         accountNumber: updatedOrder.accountNumber,
         accountAddress: updatedOrder.address,
         reason: updatedOrder.reason,
@@ -128,75 +144,56 @@ export default function ReconnectionsScreen() {
         synced: updatedOrder.synced,
       });
 
-      setOrders(orders.map(o => o.id === selectedOrder.id ? updatedOrder : o));
+      setOrders(orders.map((o) => (o.id === selectedOrder.id ? updatedOrder : o)));
       setFieldVerification('');
       setShowProcessForm(false);
       setSelectedOrder(null);
-    } catch (error) {
-      console.error('Error processing reconnection:', error);
+    } catch {
+      setFormError('Could not save this order to the phone. Try again before leaving the site.');
+    } finally {
+      setSavingOrder(false);
     }
   };
 
-  const handlePrintReceipt = async (order: ReconnectionOrder) => {
-    try {
-      await PrinterService.printServiceOrderReceipt({
-        ...order,
-        type: 'reconnection',
-      });
-    } catch (error) {
-      console.error('Error printing receipt:', error);
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return '#34C759';
-      case 'pending':
-        return '#FF9500';
-      case 'cancelled':
-        return '#FF3B30';
-      default:
-        return theme.text;
-    }
-  };
+  const handlePrintReceipt = (order: DisconnectionOrder) =>
+    print(() => PrinterService.printServiceOrderReceipt({ ...order, type: 'disconnection' }));
 
   return (
     <ScrollView
       style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentInset={insets}
-      contentContainerStyle={[styles.contentContainer, contentPlatformStyle]}>
+      contentContainerStyle={[styles.contentContainer, insets]}>
       <ThemedView style={styles.container}>
-        <ThemedView style={styles.titleContainer}>
-          <ThemedText type="subtitle">Service Reconnections</ThemedText>
-          <ThemedText style={styles.centerText} themeColor="textSecondary">
-            Process water service reconnections for settled accounts with field verification.
-          </ThemedText>
-        </ThemedView>
-
         <ThemedView style={styles.summaryContainer}>
           <ThemedView type="backgroundElement" style={styles.summaryCard}>
             <ThemedText type="small" themeColor="textSecondary">
               Pending
             </ThemedText>
-            <ThemedText type="title" style={[styles.summaryNumber, { color: '#FF9500' }]}>
+            <ThemedText style={[styles.summaryNumber, { color: twd.warning }]} numberOfLines={1}>
               {pendingOrders.length}
             </ThemedText>
           </ThemedView>
           <ThemedView type="backgroundElement" style={styles.summaryCard}>
             <ThemedText type="small" themeColor="textSecondary">
-              Completed Today
+              Done today
             </ThemedText>
-            <ThemedText type="title" style={[styles.summaryNumber, { color: '#34C759' }]}>
-              {completedOrders.filter(o => o.completionDate === new Date().toISOString().split('T')[0]).length}
+            <ThemedText style={[styles.summaryNumber, { color: twd.success }]} numberOfLines={1}>
+              {
+                completedOrders.filter(
+                  (o) => o.completionDate === new Date().toISOString().split('T')[0]
+                ).length
+              }
             </ThemedText>
           </ThemedView>
           <ThemedView type="backgroundElement" style={styles.summaryCard}>
             <ThemedText type="small" themeColor="textSecondary">
-              Total Settled
+              Outstanding
             </ThemedText>
-            <ThemedText type="title" style={styles.summaryAmount}>
-              ₱{totalSettled.toFixed(2)}
+            <ThemedText
+              style={styles.summaryNumber}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}>
+              {formatPeso(totalOutstanding)}
             </ThemedText>
           </ThemedView>
         </ThemedView>
@@ -204,10 +201,10 @@ export default function ReconnectionsScreen() {
         {showProcessForm && selectedOrder && (
           <ThemedView type="backgroundElement" style={styles.formContainer}>
             <ThemedText type="defaultBold" style={styles.formTitle}>
-              Process Reconnection
+              Process Disconnection
             </ThemedText>
-            
-            <ThemedView style={styles.orderInfo}>
+
+            <View style={styles.orderInfo}>
               <ThemedText type="small" themeColor="textSecondary">
                 Account: {selectedOrder.accountNumber}
               </ThemedText>
@@ -217,62 +214,94 @@ export default function ReconnectionsScreen() {
               <ThemedText type="small" themeColor="textSecondary">
                 {selectedOrder.address}
               </ThemedText>
-            </ThemedView>
+              <ThemedText type="small" themeColor="textSecondary">
+                Outstanding: {formatPeso(selectedOrder.outstandingBalance)}
+              </ThemedText>
+            </View>
 
             <ThemedText type="small" themeColor="textSecondary">
               Field Verification Notes
             </ThemedText>
-            <ThemedView type="backgroundElement" style={styles.inputContainer}>
+            <View
+              style={[
+                styles.inputContainer,
+                {
+                  backgroundColor: theme.backgroundElement,
+                  borderColor: formError ? twd.danger : twd.border,
+                },
+              ]}>
               <TextInput
                 style={[styles.textArea, { color: theme.text }]}
-                placeholder="Enter field verification details (meter reading, service condition, etc.)"
+                placeholder="Final meter reading, seal number, service condition…"
                 placeholderTextColor={theme.textSecondary}
                 value={fieldVerification}
-                onChangeText={setFieldVerification}
+                onChangeText={(text) => {
+                  setFieldVerification(text);
+                  if (formError) setFormError(null);
+                }}
                 multiline
                 numberOfLines={4}
                 textAlignVertical="top"
+                accessibilityLabel="Field verification notes"
               />
-            </ThemedView>
+            </View>
 
-            <ThemedView style={styles.formActions}>
-              <TouchableOpacity
-                style={[styles.cancelButton, { backgroundColor: '#FF3B30' + '20' }]}
+            {formError && (
+              <View
+                style={[
+                  styles.formErrorBox,
+                  { backgroundColor: twd.dangerSurface, borderColor: twd.danger },
+                ]}
+                accessibilityRole="alert"
+                accessibilityLiveRegion="assertive">
+                <Icon name="alert-triangle" size={18} color={twd.danger} />
+                <ThemedText type="small" style={[styles.formErrorText, { color: twd.danger }]}>
+                  {formError}
+                </ThemedText>
+              </View>
+            )}
+
+            <View style={styles.formActions}>
+              <TwdButton
+                label="Cancel"
+                variant="secondary"
                 onPress={() => {
                   setShowProcessForm(false);
                   setSelectedOrder(null);
                   setFieldVerification('');
-                }}>
-                <ThemedText type="small" style={{ color: '#FF3B30' }}>
-                  Cancel
-                </ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.completeButton, { backgroundColor: '#34C759' }]}
-                onPress={handleProcessReconnection}>
-                <ThemedText type="defaultBold" style={{ color: '#FFFFFF' }}>
-                  Complete Reconnection
-                </ThemedText>
-              </TouchableOpacity>
-            </ThemedView>
+                  setFormError(null);
+                }}
+                style={styles.cancelButton}
+              />
+              <TwdButton
+                label="Confirm Disconnection"
+                variant="danger"
+                busy={savingOrder}
+                busyLabel="Saving…"
+                onPress={() => void handleProcessDisconnection()}
+                style={styles.completeButton}
+                accessibilityHint="Records that this service was disconnected and saves it on this phone"
+              />
+            </View>
           </ThemedView>
         )}
 
         <ThemedView style={styles.ordersWrapper}>
           <ThemedText type="defaultBold" style={styles.sectionTitle}>
-            Pending Reconnections
+            Pending Disconnections
           </ThemedText>
+
           {pendingOrders.length === 0 && (
-            <ThemedView type="backgroundElement" style={styles.emptyState}>
-              <ThemedText type="small" themeColor="textSecondary">
-                No pending reconnection orders
-              </ThemedText>
-            </ThemedView>
+            <ListEmpty
+              icon="alert-triangle"
+              title="No pending disconnections"
+              body="Authorized disconnection orders will appear here, including while offline."
+            />
           )}
+
           {pendingOrders.map((order) => (
             <ThemedView key={order.id} type="backgroundElement" style={styles.orderCard}>
               <ThemedView style={styles.cardHeader}>
-                <ThemedText style={styles.statusIcon}>🔄</ThemedText>
                 <ThemedView style={styles.headerText}>
                   <ThemedText type="defaultBold" style={styles.cardTitle}>
                     {order.accountNumber}
@@ -281,20 +310,7 @@ export default function ReconnectionsScreen() {
                     {order.accountName}
                   </ThemedText>
                 </ThemedView>
-                <ThemedView
-                  style={[
-                    styles.statusBadge,
-                    { backgroundColor: getStatusColor(order.status) + '20' },
-                  ]}>
-                  <ThemedText
-                    type="small"
-                    style={[
-                      styles.statusText,
-                      { color: getStatusColor(order.status) },
-                    ]}>
-                    {order.status.toUpperCase()}
-                  </ThemedText>
-                </ThemedView>
+                <ServiceOrderBadge status={order.status} />
               </ThemedView>
 
               <ThemedView style={styles.cardDetails}>
@@ -306,23 +322,35 @@ export default function ReconnectionsScreen() {
                 </ThemedView>
                 <ThemedView style={styles.detailRow}>
                   <ThemedText type="small" themeColor="textSecondary">
-                    Previous Balance
+                    Outstanding Balance
                   </ThemedText>
-                  <ThemedText type="defaultBold">₱{order.previousBalance.toFixed(2)}</ThemedText>
-                </ThemedView>
-                <ThemedView style={styles.detailRow}>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Settlement Amount
-                  </ThemedText>
-                  <ThemedText type="defaultBold" style={{ color: '#34C759' }}>
-                    ₱{order.settlementAmount.toFixed(2)}
+                  <ThemedText type="defaultBold" style={{ color: twd.danger }}>
+                    {formatPeso(order.outstandingBalance)}
                   </ThemedText>
                 </ThemedView>
                 <ThemedView style={styles.detailRow}>
                   <ThemedText type="small" themeColor="textSecondary">
-                    Settlement Date
+                    Billing Status
                   </ThemedText>
-                  <ThemedText type="small">{order.settlementDate}</ThemedText>
+                  <ThemedText
+                    type="smallBold"
+                    style={{
+                      color: order.billingStatus === 'delinquent' ? twd.danger : twd.warning,
+                    }}>
+                    {order.billingStatus === 'delinquent' ? 'Delinquent' : 'Overdue'}
+                  </ThemedText>
+                </ThemedView>
+                <ThemedView style={styles.detailRow}>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Authorized By
+                  </ThemedText>
+                  <ThemedText type="small">{order.authorizedBy}</ThemedText>
+                </ThemedView>
+                <ThemedView style={styles.detailRow}>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Authorization Date
+                  </ThemedText>
+                  <ThemedText type="small">{order.authorizationDate}</ThemedText>
                 </ThemedView>
               </ThemedView>
 
@@ -333,25 +361,35 @@ export default function ReconnectionsScreen() {
               </ThemedView>
 
               <ThemedView style={styles.cardActions}>
-                <TouchableOpacity
-                  style={[styles.processButton, { backgroundColor: theme.backgroundElement }]}
+                <TwdButton
+                  label="Process Disconnection"
+                  variant="danger"
                   onPress={() => {
                     setSelectedOrder(order);
                     setShowProcessForm(true);
-                  }}>
-                  <ThemedText type="defaultBold">Process Reconnection</ThemedText>
-                </TouchableOpacity>
+                  }}
+                  style={styles.cardActionButton}
+                  accessibilityHint="Opens the form to record this disconnection"
+                />
               </ThemedView>
             </ThemedView>
           ))}
 
           <ThemedText type="defaultBold" style={[styles.sectionTitle, styles.sectionTitleMargin]}>
-            Completed Reconnections
+            Completed Disconnections
           </ThemedText>
+
+          {completedOrders.length === 0 && (
+            <ListEmpty
+              icon="check"
+              title="Nothing completed yet"
+              body="Orders you finish today will move down here."
+            />
+          )}
+
           {completedOrders.map((order) => (
             <ThemedView key={order.id} type="backgroundElement" style={styles.orderCard}>
               <ThemedView style={styles.cardHeader}>
-                <ThemedText style={styles.statusIcon}>✅</ThemedText>
                 <ThemedView style={styles.headerText}>
                   <ThemedText type="defaultBold" style={styles.cardTitle}>
                     {order.accountNumber}
@@ -360,20 +398,7 @@ export default function ReconnectionsScreen() {
                     {order.accountName}
                   </ThemedText>
                 </ThemedView>
-                <ThemedView
-                  style={[
-                    styles.statusBadge,
-                    { backgroundColor: getStatusColor(order.status) + '20' },
-                  ]}>
-                  <ThemedText
-                    type="small"
-                    style={[
-                      styles.statusText,
-                      { color: getStatusColor(order.status) },
-                    ]}>
-                    {order.status.toUpperCase()}
-                  </ThemedText>
-                </ThemedView>
+                <ServiceOrderBadge status={order.status} />
               </ThemedView>
 
               <ThemedView style={styles.cardDetails}>
@@ -394,11 +419,16 @@ export default function ReconnectionsScreen() {
               )}
 
               <ThemedView style={styles.cardActions}>
-                <TouchableOpacity
-                  style={[styles.printButton, { backgroundColor: theme.backgroundElement }]}
-                  onPress={() => handlePrintReceipt(order)}>
-                  <ThemedText type="small">🖨️ Print Receipt</ThemedText>
-                </TouchableOpacity>
+                <TwdButton
+                  label="Print Receipt"
+                  icon="printer"
+                  variant="secondary"
+                  busy={printing}
+                  busyLabel="Printing…"
+                  onPress={() => void handlePrintReceipt(order)}
+                  style={styles.cardActionButton}
+                  accessibilityHint={`Prints the disconnection receipt for ${order.accountName}`}
+                />
               </ThemedView>
             </ThemedView>
           ))}
@@ -420,15 +450,6 @@ const styles = StyleSheet.create({
     maxWidth: MaxContentWidth,
     flexGrow: 1,
   },
-  titleContainer: {
-    gap: Spacing.three,
-    alignItems: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.six,
-  },
-  centerText: {
-    textAlign: 'center',
-  },
   summaryContainer: {
     flexDirection: 'row',
     gap: Spacing.three,
@@ -438,16 +459,14 @@ const styles = StyleSheet.create({
   summaryCard: {
     flex: 1,
     borderRadius: Spacing.three,
-    padding: Spacing.four,
+    padding: Spacing.three,
+    gap: Spacing.one,
     alignItems: 'center',
   },
-  summaryAmount: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
   summaryNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '700',
   },
   formContainer: {
     marginHorizontal: Spacing.four,
@@ -458,20 +477,29 @@ const styles = StyleSheet.create({
   },
   formTitle: {
     fontSize: 16,
-    marginBottom: Spacing.two,
   },
   orderInfo: {
-    padding: Spacing.three,
-    borderRadius: Spacing.two,
     gap: Spacing.one,
   },
   inputContainer: {
-    borderRadius: Spacing.two,
+    borderRadius: Radius.field,
+    borderWidth: 2,
     padding: Spacing.three,
   },
   textArea: {
     fontSize: 16,
     minHeight: 80,
+  },
+  formErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: Radius.card,
+    borderWidth: 2,
+  },
+  formErrorText: {
+    flex: 1,
   },
   formActions: {
     flexDirection: 'row',
@@ -479,15 +507,9 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    borderRadius: Spacing.three,
-    padding: Spacing.three,
-    alignItems: 'center',
   },
   completeButton: {
     flex: 2,
-    borderRadius: Spacing.three,
-    padding: Spacing.three,
-    alignItems: 'center',
   },
   ordersWrapper: {
     gap: Spacing.three,
@@ -500,11 +522,6 @@ const styles = StyleSheet.create({
   sectionTitleMargin: {
     marginTop: Spacing.four,
   },
-  emptyState: {
-    padding: Spacing.six,
-    borderRadius: Spacing.three,
-    alignItems: 'center',
-  },
   orderCard: {
     borderRadius: Spacing.three,
     padding: Spacing.four,
@@ -515,23 +532,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.two,
   },
-  statusIcon: {
-    fontSize: 24,
-  },
   headerText: {
     flex: 1,
   },
   cardTitle: {
     fontSize: 16,
-  },
-  statusBadge: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.one,
-    borderRadius: Spacing.two,
-  },
-  statusText: {
-    fontSize: 10,
-    fontWeight: 'bold',
   },
   cardDetails: {
     gap: Spacing.two,
@@ -552,16 +557,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Spacing.two,
   },
-  processButton: {
+  cardActionButton: {
     flex: 1,
-    borderRadius: Spacing.three,
-    padding: Spacing.three,
-    alignItems: 'center',
-  },
-  printButton: {
-    flex: 1,
-    borderRadius: Spacing.two,
-    padding: Spacing.two,
-    alignItems: 'center',
   },
 });

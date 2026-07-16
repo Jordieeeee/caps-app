@@ -72,8 +72,20 @@ export function twdTheme(scheme: TwdScheme) {
     danger: isDark ? semantic.dangerOnDark : semantic.danger,
     dangerSurface: semantic.dangerSurface,
     success: isDark ? semantic.successOnDark : semantic.success,
-    /** Hairline borders — 3:1 against the adjacent surface. */
-    border: isDark ? '#3A3D42' : '#C9CCD1',
+    /**
+     * Borders — 3:1 against the adjacent surface, per WCAG 2.1 SC 1.4.11.
+     *
+     * The previous pair (#C9CCD1 / #3A3D42) claimed that ratio in this comment and
+     * did not come close to it: #C9CCD1 measured 1.42:1 against backgroundElement
+     * and 1.61:1 against the page. Since backgroundElement is itself only 1.14:1
+     * against the page, an unfocused input's boundary was carried by neither its
+     * fill nor its border — a control with no perceptible edge until you touched it.
+     *
+     * Light 3.63:1 on backgroundElement / 4.13:1 on page; dark 3.65:1 / 4.82:1. The
+     * headroom over the 3:1 floor is deliberate: these get read outdoors in direct
+     * sun, where the effective ratio is far lower than the one measured indoors.
+     */
+    border: isDark ? '#767980' : '#7A7D83',
   };
 }
 

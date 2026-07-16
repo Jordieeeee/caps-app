@@ -1,13 +1,19 @@
-import { Platform, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScrollView, StyleSheet } from 'react-native';
 import { useState } from 'react';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { OfflineStorage } from '@/collector/services/offline-storage';
 import { PrinterService } from '@/collector/services/printer-service';
+import { FilterChips } from '@/shared/components/filter-chips';
+import { ListEmpty } from '@/shared/components/list-states';
+import { ScreenHeader } from '@/shared/components/screen-header';
+import { SyncBadge } from '@/shared/components/status-badge';
+import { TwdButton } from '@/shared/components/twd-button';
+import { useContentInsetsWithTopSpacing } from '@/shared/hooks/use-content-insets';
+import { usePrint } from '@/shared/hooks/use-print';
+import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 
 interface MeterReading {
   id: string;
@@ -75,103 +81,59 @@ const mockReadings: MeterReading[] = [
 ];
 
 export default function ReadingReportsScreen() {
-  const safeAreaInsets = useSafeAreaInsets();
-  const insets = {
-    ...safeAreaInsets,
-    bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three,
-  };
+  const insets = useContentInsetsWithTopSpacing();
   const theme = useTheme();
-  const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
-  const [readings, setReadings] = useState<MeterReading[]>(mockReadings);
+  const twd = useTwdTheme();
+  const { print, printing } = usePrint();
 
-  const contentPlatformStyle = Platform.select({
-    android: {
-      paddingTop: insets.top,
-      paddingLeft: insets.left,
-      paddingRight: insets.right,
-      paddingBottom: insets.bottom,
-    },
-    web: {
-      paddingTop: Spacing.six,
-      paddingBottom: Spacing.four,
-    },
-  });
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+  const [readings] = useState<MeterReading[]>(mockReadings);
 
-  const filteredReadings = selectedRoute
-    ? readings.filter(r => r.routeId === selectedRoute.id)
+  const selectedRoute = mockRoutes.find((r) => r.id === selectedRouteId) ?? null;
+  const filteredReadings = selectedRouteId
+    ? readings.filter((r) => r.routeId === selectedRouteId)
     : readings;
 
   const totalConsumption = filteredReadings.reduce((sum, r) => sum + r.consumption, 0);
-  const syncedCount = filteredReadings.filter(r => r.synced).length;
+  const syncedCount = filteredReadings.filter((r) => r.synced).length;
   const unsyncedCount = filteredReadings.length - syncedCount;
-
-  const handlePrintReport = async () => {
-    try {
-      await PrinterService.printReadingReport(
-        filteredReadings,
-        selectedRoute?.id || 'ALL'
-      );
-    } catch (error) {
-      console.error('Error printing report:', error);
-    }
-  };
 
   return (
     <ScrollView
       style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentInset={insets}
-      contentContainerStyle={[styles.contentContainer, contentPlatformStyle]}>
+      contentContainerStyle={[styles.contentContainer, insets]}>
       <ThemedView style={styles.container}>
-        <ThemedView style={styles.titleContainer}>
-          <ThemedText type="subtitle">Reading Reports</ThemedText>
-          <ThemedText style={styles.centerText} themeColor="textSecondary">
-            Generate and view meter reading reports per route and collector.
-          </ThemedText>
-        </ThemedView>
+        <ScreenHeader title="Readings" subtitle="Meter readings by route" />
 
         <ThemedView style={styles.routeSelector}>
           <ThemedText type="defaultBold" style={styles.sectionTitle}>
-            Select Route
+            Route
           </ThemedText>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.routeScroll}>
-            <TouchableOpacity
-              style={[
-                styles.routeChip,
-                !selectedRoute && { backgroundColor: theme.backgroundElement },
-              ]}
-              onPress={() => setSelectedRoute(null)}>
-              <ThemedText type="small">All Routes</ThemedText>
-            </TouchableOpacity>
-            {mockRoutes.map((route) => (
-              <TouchableOpacity
-                key={route.id}
-                style={[
-                  styles.routeChip,
-                  selectedRoute?.id === route.id && {
-                    backgroundColor: theme.backgroundElement,
-                  },
-                ]}
-                onPress={() => setSelectedRoute(route)}>
-                <ThemedText type="small">{route.name}</ThemedText>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          <FilterChips
+            chips={mockRoutes.map((r) => ({ id: r.id, label: r.name }))}
+            selectedId={selectedRouteId}
+            onSelect={setSelectedRouteId}
+            allLabel="All Routes"
+            accessibilityLabel="Filter readings by route"
+          />
         </ThemedView>
 
+        {/* 2×2, not four across: four tiles in one row left each number ~60px of
+            width, and these carry values like "1,285 m³". */}
         <ThemedView style={styles.summaryContainer}>
           <ThemedView type="backgroundElement" style={styles.summaryCard}>
             <ThemedText type="small" themeColor="textSecondary">
-              Total Readings
+              Readings
             </ThemedText>
-            <ThemedText type="title" style={styles.summaryNumber}>
+            <ThemedText style={styles.summaryNumber} numberOfLines={1}>
               {filteredReadings.length}
             </ThemedText>
           </ThemedView>
           <ThemedView type="backgroundElement" style={styles.summaryCard}>
             <ThemedText type="small" themeColor="textSecondary">
-              Total Consumption
+              Consumption
             </ThemedText>
-            <ThemedText type="title" style={styles.summaryNumber}>
+            <ThemedText style={styles.summaryNumber} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
               {totalConsumption} m³
             </ThemedText>
           </ThemedView>
@@ -179,32 +141,52 @@ export default function ReadingReportsScreen() {
             <ThemedText type="small" themeColor="textSecondary">
               Synced
             </ThemedText>
-            <ThemedText type="title" style={[styles.summaryNumber, { color: '#34C759' }]}>
+            <ThemedText style={[styles.summaryNumber, { color: twd.success }]} numberOfLines={1}>
               {syncedCount}
             </ThemedText>
           </ThemedView>
           <ThemedView type="backgroundElement" style={styles.summaryCard}>
             <ThemedText type="small" themeColor="textSecondary">
-              Pending Sync
+              Pending sync
             </ThemedText>
-            <ThemedText type="title" style={[styles.summaryNumber, { color: '#FF9500' }]}>
+            <ThemedText style={[styles.summaryNumber, { color: twd.warning }]} numberOfLines={1}>
               {unsyncedCount}
             </ThemedText>
           </ThemedView>
         </ThemedView>
 
         <ThemedView style={styles.actionsContainer}>
-          <TouchableOpacity
-            style={[styles.printButton, { backgroundColor: theme.backgroundElement }]}
-            onPress={handlePrintReport}>
-            <ThemedText type="defaultBold">🖨️ Print Report</ThemedText>
-          </TouchableOpacity>
+          <TwdButton
+            label="Print Report"
+            icon="printer"
+            busy={printing}
+            busyLabel="Printing…"
+            onPress={() =>
+              void print(() =>
+                PrinterService.printReadingReport(filteredReadings, selectedRoute?.id ?? 'ALL')
+              )
+            }
+            accessibilityHint="Prints the readings shown to the thermal printer"
+          />
         </ThemedView>
 
         <ThemedView style={styles.readingsWrapper}>
           <ThemedText type="defaultBold" style={styles.sectionTitle}>
             Meter Readings
           </ThemedText>
+
+          {filteredReadings.length === 0 && (
+            <ListEmpty
+              icon="gauge"
+              title="No readings for this route yet"
+              body={
+                selectedRoute
+                  ? `Nothing recorded on ${selectedRoute.name} today. Readings you record are saved on this phone straight away, with or without signal.`
+                  : 'Nothing recorded yet today. Readings you record are saved on this phone straight away, with or without signal.'
+              }
+            />
+          )}
+
           {filteredReadings.map((reading) => (
             <ThemedView key={reading.id} type="backgroundElement" style={styles.readingCard}>
               <ThemedView style={styles.cardHeader}>
@@ -216,23 +198,9 @@ export default function ReadingReportsScreen() {
                     {reading.readingDate}
                   </ThemedText>
                 </ThemedView>
-                <ThemedView
-                  style={[
-                    styles.syncBadge,
-                    {
-                      backgroundColor: reading.synced ? '#34C75920' : '#FF950020',
-                    },
-                  ]}>
-                  <ThemedText
-                    type="small"
-                    style={[
-                      styles.syncText,
-                      { color: reading.synced ? '#34C759' : '#FF9500' },
-                    ]}>
-                    {reading.synced ? 'SYNCED' : 'PENDING'}
-                  </ThemedText>
-                </ThemedView>
+                <SyncBadge status={reading.synced ? 'synced' : 'pending'} />
               </ThemedView>
+
               <ThemedView style={styles.readingDetails}>
                 <ThemedView style={styles.detailRow}>
                   <ThemedText type="small" themeColor="textSecondary">
@@ -250,12 +218,11 @@ export default function ReadingReportsScreen() {
                   <ThemedText type="small" themeColor="textSecondary">
                     Consumption
                   </ThemedText>
-                  <ThemedText type="defaultBold" style={{ color: '#007AFF' }}>
-                    {reading.consumption} m³
-                  </ThemedText>
+                  <ThemedText type="defaultBold">{reading.consumption} m³</ThemedText>
                 </ThemedView>
               </ThemedView>
-              <ThemedView style={styles.cardFooter}>
+
+              <ThemedView style={[styles.cardFooter, { borderTopColor: twd.border }]}>
                 <ThemedText type="small" themeColor="textSecondary">
                   Route: {reading.routeId} | Collector: {reading.collectorId}
                 </ThemedText>
@@ -280,15 +247,6 @@ const styles = StyleSheet.create({
     maxWidth: MaxContentWidth,
     flexGrow: 1,
   },
-  titleContainer: {
-    gap: Spacing.three,
-    alignItems: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.six,
-  },
-  centerText: {
-    textAlign: 'center',
-  },
   routeSelector: {
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.four,
@@ -296,17 +254,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     marginBottom: Spacing.two,
-  },
-  routeScroll: {
-    flexDirection: 'row',
-  },
-  routeChip: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
-    marginRight: Spacing.two,
-    borderWidth: 1,
-    borderColor: 'transparent',
   },
   summaryContainer: {
     flexDirection: 'row',
@@ -316,23 +263,24 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.four,
   },
   summaryCard: {
+    flexGrow: 1,
+    flexBasis: '45%',
     borderRadius: Spacing.three,
-    padding: Spacing.four,
+    padding: Spacing.three,
+    gap: Spacing.one,
     alignItems: 'center',
-    minWidth: 100,
   },
+  // fontSize with its own lineHeight — the previous version used type="title"
+  // (lineHeight 52) with a fontSize-only override, the same orphaned-metrics bug
+  // that produced the overlapping currency tiles elsewhere.
   summaryNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '700',
   },
   actionsContainer: {
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.four,
-  },
-  printButton: {
-    borderRadius: Spacing.three,
-    padding: Spacing.four,
-    alignItems: 'center',
   },
   readingsWrapper: {
     gap: Spacing.three,
@@ -355,15 +303,6 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
   },
-  syncBadge: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.one,
-    borderRadius: Spacing.two,
-  },
-  syncText: {
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
   readingDetails: {
     gap: Spacing.two,
   },
@@ -374,6 +313,5 @@ const styles = StyleSheet.create({
   cardFooter: {
     paddingTop: Spacing.two,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.1)',
   },
 });

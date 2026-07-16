@@ -14,8 +14,10 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth } from '@/constants/theme';
 import { useAuth } from '@/shared/auth/auth-context';
+import { PasswordRevealToggle } from '@/shared/components/password-reveal-toggle';
 import { ScreenMessage } from '@/shared/components/screen-message';
 import { TwdButton } from '@/shared/components/twd-button';
+import { TwdLink } from '@/shared/components/twd-link';
 import { TwdTextField } from '@/shared/components/twd-text-field';
 import { useConnectivity } from '@/shared/hooks/use-connectivity';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
@@ -45,6 +47,7 @@ export function LoginScreen() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordRevealed, setPasswordRevealed] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<{ code: string; message: string } | null>(null);
 
@@ -92,7 +95,13 @@ export function LoginScreen() {
       const message =
         error instanceof Error ? error.message : 'Something went wrong. Please try again.';
       setFormError({ code, message });
-      if (code === AuthErrorCode.INVALID_CREDENTIALS) setPassword('');
+      if (code === AuthErrorCode.INVALID_CREDENTIALS) {
+        setPassword('');
+        // Re-mask on a rejected attempt. The cleared field is about to be retyped,
+        // and inheriting "revealed" from the previous try would put the retyped
+        // password on screen without the user having asked for it again.
+        setPasswordRevealed(false);
+      }
     }
   }
 
@@ -191,13 +200,37 @@ export function LoginScreen() {
                     if (fieldErrors.password) setFieldErrors((p) => ({ ...p, password: undefined }));
                   }}
                   error={fieldErrors.password}
-                  secureTextEntry
+                  secureTextEntry={!passwordRevealed}
                   autoCapitalize="none"
-                  autoComplete="current-password"
-                  textContentType="password"
+                  autoCorrect={false}
+                  // Off for the revealed path: iOS and Android both refuse to
+                  // autofill a field that isn't masked, and leaving it on makes the
+                  // keyboard offer suggestions over a visible password.
+                  autoComplete={passwordRevealed ? 'off' : 'current-password'}
+                  textContentType={passwordRevealed ? 'none' : 'password'}
                   editable={!busy}
                   returnKeyType="go"
                   onSubmitEditing={() => void attemptSignIn()}
+                  trailingAccessory={
+                    <PasswordRevealToggle
+                      revealed={passwordRevealed}
+                      onToggle={() => setPasswordRevealed((v) => !v)}
+                      disabled={busy}
+                    />
+                  }
+                />
+
+                {/* Recovery sits with the field it recovers, above the submit button
+                    rather than in the footer: someone who cannot remember their
+                    password needs this before they commit to a failed attempt, not
+                    after. Trailing-aligned so it stays out of the scan path from
+                    field to primary action. */}
+                <TwdLink
+                  label="Forgot your password?"
+                  onPress={() => router.push('/forgot-password')}
+                  disabled={busy}
+                  accessibilityHint="Explains how to have your TWD password reset"
+                  style={styles.forgot}
                 />
 
                 <TwdButton
@@ -214,16 +247,23 @@ export function LoginScreen() {
                   we cannot know the role, so the wording — not the visibility — is
                   what keeps staff from reading this as their path. Once signed in,
                   this screen is unmounted entirely, so it cannot appear inside a
-                  collector's session. */}
+                  collector's session.
+
+                  A text link, not an outlined button. Enrolment served maybe a few
+                  hundred consumers once each, while sign-in serves every collector
+                  every shift; a full-width bordered button gave a once-per-lifetime
+                  action the same silhouette as the one action this screen exists
+                  for. Demoting it costs enrolment nothing — someone who came here to
+                  enrol is reading for it — and it stops the daily user having to
+                  choose between two equals. */}
               <View style={[styles.enroll, { borderTopColor: theme.border }]}>
                 <ThemedText type="small" themeColor="textSecondary" style={styles.centered}>
                   Are you a water district customer without an account?
                 </ThemedText>
-                <TwdButton
+                <TwdLink
                   label="Enroll a consumer account"
-                  variant="secondary"
                   onPress={() => router.push('/enroll')}
-                  style={styles.enrollButton}
+                  disabled={busy}
                   accessibilityHint="Opens consumer account enrolment. Water district staff accounts are created by the TWD office."
                 />
                 <ThemedText type="small" themeColor="textSecondary" style={styles.centered}>
@@ -312,6 +352,7 @@ const styles = StyleSheet.create({
   },
   centered: { textAlign: 'center' },
   form: { gap: Spacing.three },
+  forgot: { alignSelf: 'flex-end', marginTop: -Spacing.two },
   submit: { marginTop: Spacing.two },
   notice: {
     gap: Spacing.half,
@@ -329,7 +370,6 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingTop: Spacing.four,
     borderTopWidth: StyleSheet.hairlineWidth * 2,
-    alignItems: 'stretch',
+    alignItems: 'center',
   },
-  enrollButton: { alignSelf: 'stretch' },
 });

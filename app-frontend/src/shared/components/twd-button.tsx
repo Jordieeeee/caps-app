@@ -9,13 +9,26 @@ import {
 
 import { ThemedText } from '@/components/themed-text';
 import { ActiveGlassSurface } from '@/shared/components/active-glass-surface';
+import { Icon, type IconName } from '@/shared/components/icon';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
 
 interface TwdButtonProps {
   label: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary';
+  /**
+   * `danger` is for actions that destroy work or access — it is an outline like
+   * `secondary`, in the danger tone rather than the brand one. Deliberately not a
+   * filled red button: a filled destructive control is the most visually dominant
+   * thing on a screen, which is backwards for something nobody should reach for by
+   * accident.
+   */
+  variant?: 'primary' | 'secondary' | 'danger';
+  /**
+   * Optional leading glyph. Decorative — the label already says what the button
+   * does, so the icon is hidden from screen readers rather than announced twice.
+   */
+  icon?: IconName;
   /** Shows a spinner and blocks input. Visually distinct from the offline state. */
   busy?: boolean;
   busyLabel?: string;
@@ -28,6 +41,7 @@ export function TwdButton({
   label,
   onPress,
   variant = 'primary',
+  icon,
   busy = false,
   busyLabel,
   disabled = false,
@@ -36,6 +50,9 @@ export function TwdButton({
 }: TwdButtonProps) {
   const theme = useTwdTheme();
   const inert = disabled || busy;
+  // The accent an outline variant draws itself in. `primary` ignores this — it is
+  // filled, and its label sits on the fill.
+  const accent = variant === 'danger' ? theme.danger : theme.primary;
 
   return (
     <Pressable
@@ -59,23 +76,29 @@ export function TwdButton({
                       ? theme.primaryPressed
                       : theme.primary
                     : 'transparent',
-                borderColor: variant === 'secondary' ? theme.primary : 'transparent',
-                borderWidth: variant === 'secondary' ? StyleSheet.hairlineWidth * 2 : 0,
+                borderColor: variant === 'primary' ? 'transparent' : accent,
+                borderWidth: variant === 'primary' ? 0 : 2,
                 opacity: inert ? 0.5 : 1,
               },
             ]}>
-            {busy && (
+            {busy ? (
               <ActivityIndicator
                 size="small"
-                color={variant === 'primary' ? theme.onPrimary : theme.primary}
+                color={variant === 'primary' ? theme.onPrimary : accent}
               />
-            )}
+            ) : icon ? (
+              // Swapped for the spinner rather than shown alongside it — the icon's
+              // slot becomes the busy slot, so the label never shifts sideways when
+              // the button starts working.
+              <Icon
+                name={icon}
+                size={18}
+                color={variant === 'primary' ? theme.onPrimary : accent}
+              />
+            ) : null}
             <ThemedText
               type="defaultBold"
-              style={[
-                styles.label,
-                { color: variant === 'primary' ? theme.onPrimary : theme.primary },
-              ]}>
+              style={[styles.label, { color: variant === 'primary' ? theme.onPrimary : accent }]}>
               {busy && busyLabel ? busyLabel : label}
             </ThemedText>
           </View>

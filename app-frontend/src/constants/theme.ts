@@ -61,5 +61,15 @@ export const Spacing = {
   six: 64,
 } as const;
 
-export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
+/**
+ * Height to reserve for the bottom tab bar.
+ *
+ * Web was previously falling through the `?? 0` and reserving nothing, even though
+ * NativeTabs renders a tab bar there too — so web content ran under the bar. Every
+ * platform that draws a tab bar now names a value.
+ *
+ * These are estimates: NativeTabs renders the platform's own bar and reports no
+ * height to JS. Re-measure on device if the tab count or minimum OS version moves.
+ */
+export const BottomTabInset = Platform.select({ ios: 50, android: 80, web: 64 }) ?? 0;
 export const MaxContentWidth = 800;

@@ -1,12 +1,19 @@
-import { Platform, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScrollView, StyleSheet } from 'react-native';
 import { useState } from 'react';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { PrinterService } from '@/collector/services/printer-service';
+import { formatPeso } from '@/shared/format/currency';
+import { FilterChips } from '@/shared/components/filter-chips';
+import { ListEmpty } from '@/shared/components/list-states';
+import { ScreenHeader } from '@/shared/components/screen-header';
+import { PaymentBadge } from '@/shared/components/status-badge';
+import { TwdButton } from '@/shared/components/twd-button';
+import { useContentInsetsWithTopSpacing } from '@/shared/hooks/use-content-insets';
+import { usePrint } from '@/shared/hooks/use-print';
 
 interface Invoice {
   id: string;
@@ -41,8 +48,8 @@ const mockCollectionPeriods: CollectionPeriod[] = [
     startDate: '2025-07-01',
     endDate: '2025-07-31',
     totalInvoices: 450,
-    totalBilled: 18500,
-    totalCollected: 12500,
+    totalBilled: 202500,
+    totalCollected: 137000,
   },
   {
     id: 'CP-2025-06',
@@ -50,8 +57,8 @@ const mockCollectionPeriods: CollectionPeriod[] = [
     startDate: '2025-06-01',
     endDate: '2025-06-30',
     totalInvoices: 445,
-    totalBilled: 18200,
-    totalCollected: 18200,
+    totalBilled: 198400,
+    totalCollected: 198400,
   },
   {
     id: 'CP-2025-05',
@@ -59,8 +66,8 @@ const mockCollectionPeriods: CollectionPeriod[] = [
     startDate: '2025-05-01',
     endDate: '2025-05-31',
     totalInvoices: 440,
-    totalBilled: 17800,
-    totalCollected: 17500,
+    totalBilled: 191200,
+    totalCollected: 188600,
   },
 ];
 
@@ -69,9 +76,9 @@ const mockInvoices: Invoice[] = [
     id: 'INV-001',
     accountNumber: 'WD-12345',
     accountName: 'Juan Dela Cruz',
-    address: '123 Main Street, Springfield',
+    address: '24 Mabini Street, Brgy. Poblacion 3, Tanauan City',
     billingPeriod: 'July 2025',
-    amount: 45.50,
+    amount: 486.00,
     status: 'billed',
     dueDate: '2025-08-15',
     meterReading: {
@@ -84,9 +91,9 @@ const mockInvoices: Invoice[] = [
     id: 'INV-002',
     accountNumber: 'WD-12346',
     accountName: 'Maria Santos',
-    address: '456 Oak Avenue, Springfield',
+    address: '117 J.P. Laurel Highway, Brgy. Darasa, Tanauan City',
     billingPeriod: 'July 2025',
-    amount: 38.75,
+    amount: 452.75,
     status: 'paid',
     dueDate: '2025-08-15',
     meterReading: {
@@ -99,9 +106,9 @@ const mockInvoices: Invoice[] = [
     id: 'INV-003',
     accountNumber: 'WD-12347',
     accountName: 'Pedro Reyes',
-    address: '789 Pine Road, Springfield',
+    address: '8 Rizal Avenue, Brgy. Sambat, Tanauan City',
     billingPeriod: 'July 2025',
-    amount: 52.25,
+    amount: 1248.50,
     status: 'overdue',
     dueDate: '2025-08-15',
     meterReading: {
@@ -113,40 +120,32 @@ const mockInvoices: Invoice[] = [
 ];
 
 export default function ServiceReportsScreen() {
-  const safeAreaInsets = useSafeAreaInsets();
-  const insets = {
-    ...safeAreaInsets,
-    bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three,
-  };
+  const insets = useContentInsetsWithTopSpacing();
   const theme = useTheme();
-  const [selectedPeriod, setSelectedPeriod] = useState<CollectionPeriod | null>(null);
-  const [invoices, setInvoices] = useState<Invoice[]>(mockInvoices);
+  const { print, printing } = usePrint();
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(
+    mockCollectionPeriods[0].id
+  );
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [invoices] = useState<Invoice[]>(mockInvoices);
 
-  const contentPlatformStyle = Platform.select({
-    android: {
-      paddingTop: insets.top,
-      paddingLeft: insets.left,
-      paddingRight: insets.right,
-      paddingBottom: insets.bottom,
-    },
-    web: {
-      paddingTop: Spacing.six,
-      paddingBottom: Spacing.four,
-    },
-  });
-
-  const currentPeriod = selectedPeriod || mockCollectionPeriods[0];
-  const billedCount = invoices.filter(i => i.status === 'billed').length;
-  const paidCount = invoices.filter(i => i.status === 'paid').length;
-  const overdueCount = invoices.filter(i => i.status === 'overdue').length;
-  const collectionRate = currentPeriod.totalBilled > 0 
-    ? (currentPeriod.totalCollected / currentPeriod.totalBilled) * 100 
+  const currentPeriod =
+    mockCollectionPeriods.find((p) => p.id === selectedPeriodId) ?? mockCollectionPeriods[0];
+  const billedCount = invoices.filter((i) => i.status === 'billed').length;
+  const paidCount = invoices.filter((i) => i.status === 'paid').length;
+  const overdueCount = invoices.filter((i) => i.status === 'overdue').length;
+  const collectionRate = currentPeriod.totalBilled > 0
+    ? (currentPeriod.totalCollected / currentPeriod.totalBilled) * 100
     : 0;
 
-  const handlePrintReport = async () => {
-    try {
-      const printData = {
-        type: 'report' as const,
+  const visibleInvoices = statusFilter
+    ? invoices.filter((i) => i.status === statusFilter)
+    : invoices;
+
+  const handlePrintReport = () =>
+    print(() =>
+      PrinterService.print({
+        type: 'report',
         title: `SERVICE REPORT - ${currentPeriod.name}`,
         content: [
           `Period: ${currentPeriod.startDate} to ${currentPeriod.endDate}`,
@@ -160,83 +159,54 @@ export default function ServiceReportsScreen() {
           `Overdue: ${overdueCount}`,
         ],
         footer: 'End of Service Report',
-      };
-      await PrinterService.print(printData);
-    } catch (error) {
-      console.error('Error printing report:', error);
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'paid':
-        return '#34C759';
-      case 'billed':
-        return '#007AFF';
-      case 'overdue':
-        return '#FF3B30';
-      default:
-        return theme.text;
-    }
-  };
+      })
+    );
 
   return (
     <ScrollView
       style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentInset={insets}
-      contentContainerStyle={[styles.contentContainer, contentPlatformStyle]}>
+      contentContainerStyle={[styles.contentContainer, insets]}>
       <ThemedView style={styles.container}>
-        <ThemedView style={styles.titleContainer}>
-          <ThemedText type="subtitle">Service & Invoice Reports</ThemedText>
-          <ThemedText style={styles.centerText} themeColor="textSecondary">
-            View summarized billed accounts for each collection period.
-          </ThemedText>
-        </ThemedView>
+        <ScreenHeader title="Reports" subtitle="Billing and collection by period" />
 
         <ThemedView style={styles.periodSelector}>
           <ThemedText type="defaultBold" style={styles.sectionTitle}>
             Collection Period
           </ThemedText>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.periodScroll}>
-            {mockCollectionPeriods.map((period) => (
-              <TouchableOpacity
-                key={period.id}
-                style={[
-                  styles.periodChip,
-                  selectedPeriod?.id === period.id && {
-                    backgroundColor: theme.backgroundElement,
-                  },
-                ]}
-                onPress={() => setSelectedPeriod(period)}>
-                <ThemedText type="small">{period.name}</ThemedText>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          <FilterChips
+            chips={mockCollectionPeriods.map((p) => ({ id: p.id, label: p.name }))}
+            selectedId={selectedPeriodId}
+            onSelect={setSelectedPeriodId}
+            accessibilityLabel="Filter by collection period"
+          />
         </ThemedView>
 
+        {/* Two tiles per row, not three. Three ₱ figures across a 375px screen left
+            each value ~50px of text width, which is what wrapped "₱18500.00" into
+            "₱1850" / "0.00". Money needs room; the rate is narrow and can share. */}
         <ThemedView style={styles.summaryContainer}>
           <ThemedView type="backgroundElement" style={styles.summaryCard}>
             <ThemedText type="small" themeColor="textSecondary">
               Total Billed
             </ThemedText>
-            <ThemedText type="title" style={styles.summaryAmount}>
-              ₱{currentPeriod.totalBilled.toFixed(2)}
+            <ThemedText
+              style={styles.summaryAmount}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}>
+              {formatPeso(currentPeriod.totalBilled)}
             </ThemedText>
           </ThemedView>
           <ThemedView type="backgroundElement" style={styles.summaryCard}>
             <ThemedText type="small" themeColor="textSecondary">
               Total Collected
             </ThemedText>
-            <ThemedText type="title" style={[styles.summaryAmount, { color: '#34C759' }]}>
-              ₱{currentPeriod.totalCollected.toFixed(2)}
-            </ThemedText>
-          </ThemedView>
-          <ThemedView type="backgroundElement" style={styles.summaryCard}>
-            <ThemedText type="small" themeColor="textSecondary">
-              Collection Rate
-            </ThemedText>
-            <ThemedText type="title" style={styles.summaryNumber}>
-              {collectionRate.toFixed(1)}%
+            <ThemedText
+              style={[styles.summaryAmount, { color: theme.text }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}>
+              {formatPeso(currentPeriod.totalCollected)}
             </ThemedText>
           </ThemedView>
         </ThemedView>
@@ -244,43 +214,67 @@ export default function ServiceReportsScreen() {
         <ThemedView style={styles.statusContainer}>
           <ThemedView type="backgroundElement" style={styles.statusCard}>
             <ThemedText type="small" themeColor="textSecondary">
-              Billed
+              Collection Rate
             </ThemedText>
-            <ThemedText type="defaultBold" style={{ color: '#007AFF' }}>
-              {billedCount}
-            </ThemedText>
-          </ThemedView>
-          <ThemedView type="backgroundElement" style={styles.statusCard}>
-            <ThemedText type="small" themeColor="textSecondary">
-              Paid
-            </ThemedText>
-            <ThemedText type="defaultBold" style={{ color: '#34C759' }}>
-              {paidCount}
+            <ThemedText style={styles.summaryNumber} numberOfLines={1}>
+              {collectionRate.toFixed(1)}%
             </ThemedText>
           </ThemedView>
           <ThemedView type="backgroundElement" style={styles.statusCard}>
             <ThemedText type="small" themeColor="textSecondary">
-              Overdue
+              Invoices
             </ThemedText>
-            <ThemedText type="defaultBold" style={{ color: '#FF3B30' }}>
-              {overdueCount}
+            <ThemedText style={styles.summaryNumber} numberOfLines={1}>
+              {billedCount + paidCount + overdueCount}
             </ThemedText>
           </ThemedView>
         </ThemedView>
 
         <ThemedView style={styles.actionsContainer}>
-          <TouchableOpacity
-            style={[styles.printButton, { backgroundColor: theme.backgroundElement }]}
-            onPress={handlePrintReport}>
-            <ThemedText type="defaultBold">🖨️ Print Report</ThemedText>
-          </TouchableOpacity>
+          <TwdButton
+            label="Print Report"
+            icon="printer"
+            busy={printing}
+            busyLabel="Printing…"
+            onPress={() => void handlePrintReport()}
+          />
         </ThemedView>
 
         <ThemedView style={styles.invoicesWrapper}>
           <ThemedText type="defaultBold" style={styles.sectionTitle}>
             Invoice Details
           </ThemedText>
-          {invoices.map((invoice) => (
+
+          {/* Filters, not a legend — that was the ambiguity. A row of status pills
+              that merely explained colours looked exactly as tappable as the period
+              chips above it. Now they ARE tappable, they carry counts so a collector
+              can see "Overdue (1)" without scrolling, and they render through the
+              same FilterChips component as every other filter row — the selected
+              treatment (tinted fill + primary border + bold) is learned once and
+              holds everywhere. The badges on the cards remain non-interactive and
+              visually distinct: smaller, outline-only, icon + word. */}
+          <FilterChips
+            chips={[
+              { id: 'billed', label: `Billed (${billedCount})` },
+              { id: 'paid', label: `Paid (${paidCount})` },
+              { id: 'overdue', label: `Overdue (${overdueCount})` },
+            ]}
+            selectedId={statusFilter}
+            onSelect={setStatusFilter}
+            allLabel={`All (${invoices.length})`}
+            accessibilityLabel="Filter invoices by payment status"
+          />
+
+          {visibleInvoices.length === 0 && (
+            <ListEmpty
+              icon="file-text"
+              title="No invoices with this status"
+              body="Nothing in this period matches the selected filter. Clear it to see every invoice."
+              action={{ label: 'Show all', onPress: () => setStatusFilter(null) }}
+            />
+          )}
+
+          {visibleInvoices.map((invoice) => (
             <ThemedView key={invoice.id} type="backgroundElement" style={styles.invoiceCard}>
               <ThemedView style={styles.cardHeader}>
                 <ThemedView style={styles.headerText}>
@@ -291,20 +285,7 @@ export default function ServiceReportsScreen() {
                     {invoice.accountName}
                   </ThemedText>
                 </ThemedView>
-                <ThemedView
-                  style={[
-                    styles.statusBadge,
-                    { backgroundColor: getStatusColor(invoice.status) + '20' },
-                  ]}>
-                  <ThemedText
-                    type="small"
-                    style={[
-                      styles.statusText,
-                      { color: getStatusColor(invoice.status) },
-                    ]}>
-                    {invoice.status.toUpperCase()}
-                  </ThemedText>
-                </ThemedView>
+                <PaymentBadge status={invoice.status} />
               </ThemedView>
 
               <ThemedView style={styles.cardDetails}>
@@ -324,7 +305,7 @@ export default function ServiceReportsScreen() {
                   <ThemedText type="small" themeColor="textSecondary">
                     Amount
                   </ThemedText>
-                  <ThemedText type="defaultBold">₱{invoice.amount.toFixed(2)}</ThemedText>
+                  <ThemedText type="defaultBold">{formatPeso(invoice.amount)}</ThemedText>
                 </ThemedView>
                 <ThemedView style={styles.detailRow}>
                   <ThemedText type="small" themeColor="textSecondary">
@@ -355,7 +336,7 @@ export default function ServiceReportsScreen() {
                     <ThemedText type="small" themeColor="textSecondary">
                       Cons
                     </ThemedText>
-                    <ThemedText type="defaultBold" style={{ color: '#007AFF' }}>
+                    <ThemedText type="defaultBold" style={{ color: theme.text }}>
                       {invoice.meterReading.consumption} m³
                     </ThemedText>
                   </ThemedView>
@@ -381,15 +362,6 @@ const styles = StyleSheet.create({
     maxWidth: MaxContentWidth,
     flexGrow: 1,
   },
-  titleContainer: {
-    gap: Spacing.three,
-    alignItems: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.six,
-  },
-  centerText: {
-    textAlign: 'center',
-  },
   periodSelector: {
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.four,
@@ -398,36 +370,38 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: Spacing.two,
   },
-  periodScroll: {
-    flexDirection: 'row',
-  },
-  periodChip: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
-    marginRight: Spacing.two,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
   summaryContainer: {
     flexDirection: 'row',
     gap: Spacing.three,
     paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
+    paddingBottom: Spacing.three,
   },
   summaryCard: {
     flex: 1,
     borderRadius: Spacing.three,
-    padding: Spacing.four,
+    // Was Spacing.four (24) each side, eating half the tile's width on a phone.
+    padding: Spacing.three,
+    gap: Spacing.one,
     alignItems: 'center',
   },
+  /**
+   * fontSize AND lineHeight, together.
+   *
+   * These were `type="title"` + a fontSize-only override. `title` carries
+   * lineHeight: 52 for a 48px glyph; overriding fontSize to 20 left the 52px line
+   * box behind, so once the value wrapped, the two lines rendered in colliding
+   * boxes — the "strikethrough with a stray 0.00 under it". Dropping `type` and
+   * declaring both here means the metrics can't be inherited apart.
+   */
   summaryAmount: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '700',
   },
   summaryNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '700',
   },
   statusContainer: {
     flexDirection: 'row',
@@ -439,16 +413,12 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: Spacing.three,
     padding: Spacing.three,
+    gap: Spacing.one,
     alignItems: 'center',
   },
   actionsContainer: {
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.four,
-  },
-  printButton: {
-    borderRadius: Spacing.three,
-    padding: Spacing.four,
-    alignItems: 'center',
   },
   invoicesWrapper: {
     gap: Spacing.three,
@@ -470,15 +440,6 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 16,
-  },
-  statusBadge: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.one,
-    borderRadius: Spacing.two,
-  },
-  statusText: {
-    fontSize: 10,
-    fontWeight: 'bold',
   },
   cardDetails: {
     gap: Spacing.two,
