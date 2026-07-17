@@ -29,10 +29,12 @@ import { Radius, Spacing, type TwdColors } from '@/shared/theme/twd';
  * glare, by someone who is not looking carefully.
  */
 
-export type SyncStatus = 'synced' | 'pending';
+export type SyncStatus = 'synced' | 'pending' | 'failed';
 export type PaymentStatus = 'billed' | 'paid' | 'overdue' | 'pending';
 export type ServiceOrderStatus = 'pending' | 'completed' | 'cancelled';
 export type AccountStatus = 'active' | 'inactive';
+/** Where an account stands on today's route. See READING below. */
+export type ReadingState = 'unread' | 'pending' | 'done';
 
 /** Matches the backend Announcement schema's two independent enums. */
 export type NoticeType = 'interruption' | 'advisory' | 'service-update';
@@ -56,6 +58,17 @@ const SYNC: Record<SyncStatus, Descriptor> = {
   synced: { label: 'Synced', tone: 'success', icon: 'check' },
   // "Pending sync", never "Pending" — see above.
   pending: { label: 'Pending sync', tone: 'warning', icon: 'cloud-off' },
+  /**
+   * A send was attempted and did not land.
+   *
+   * Strictly narrower than `pending`, and only claimable in the session that
+   * watched the attempt fail: nothing on disk records *why* a record is unsynced,
+   * so after a restart an unsent record is `pending` again — we know it has not
+   * arrived, not that anything went wrong. Painting it red on a fresh launch would
+   * assert a failure nobody observed. Red is for the failure the collector just
+   * watched happen, because that is the one they can act on.
+   */
+  failed: { label: 'Failed', tone: 'danger', icon: 'alert-triangle' },
 };
 
 const PAYMENT: Record<PaymentStatus, Descriptor> = {
@@ -72,6 +85,28 @@ const SERVICE_ORDER: Record<ServiceOrderStatus, Descriptor> = {
   pending: { label: 'Pending', tone: 'warning', icon: 'file-text' },
   completed: { label: 'Completed', tone: 'success', icon: 'check' },
   cancelled: { label: 'Cancelled', tone: 'danger', icon: 'x' },
+};
+
+/**
+ * The route list's three states, which are three different jobs:
+ *
+ *   unread  → go here and read the meter
+ *   pending → read, billed, receipt printed; TWD does not have it yet
+ *   done    → read and confirmed received by TWD
+ *
+ * `unread` is neutral grey, not amber: an account the collector has not walked to
+ * yet is not a warning, it is the entire remaining workload, and colouring twelve
+ * of them amber at 7am makes the one that genuinely needs attention invisible.
+ *
+ * `pending` reuses the sync vocabulary verbatim — same "Pending sync" wording,
+ * same cloud-off glyph, same amber — because it is the same fact as the SyncBadge
+ * on every other screen. A collector should not have to learn that this list's
+ * amber means what the last list's amber meant.
+ */
+const READING: Record<ReadingState, Descriptor> = {
+  unread: { label: 'Unread', tone: 'neutral', icon: 'gauge' },
+  pending: { label: 'Pending sync', tone: 'warning', icon: 'cloud-off' },
+  done: { label: 'Done', tone: 'success', icon: 'check' },
 };
 
 const ACCOUNT: Record<AccountStatus, Descriptor> = {
@@ -150,6 +185,10 @@ export function ServiceOrderBadge({ status }: { status: ServiceOrderStatus }) {
 
 export function AccountStatusBadge({ status }: { status: AccountStatus }) {
   return <Badge descriptor={ACCOUNT[status]} />;
+}
+
+export function ReadingStateBadge({ state }: { state: ReadingState }) {
+  return <Badge descriptor={READING[state]} />;
 }
 
 /**

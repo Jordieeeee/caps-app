@@ -35,6 +35,22 @@ export function formatPesoCompact(amount: number): string {
   return formatPeso(amount);
 }
 
+/**
+ * `18500` → `"18,500.00"`. Same number, no symbol.
+ *
+ * For the thermal printer. The PT-210 prints from a single-byte codepage that has
+ * no ₱ glyph in any of the variants these units ship with, so `formatPeso`'s
+ * symbol would emit one byte the printer renders as whatever sits at that
+ * position — a stray "P", a box, or nothing. The receipt template says "Basic
+ * Charge: 245.00" for that reason, and this is the formatter that produces it.
+ */
+export function formatAmount(amount: number): string {
+  if (!Number.isFinite(amount)) return '—';
+  const negative = amount < 0;
+  const [whole, fraction] = Math.abs(amount).toFixed(2).split('.');
+  return `${negative ? '-' : ''}${group(whole)}.${fraction}`;
+}
+
 function group(whole: string): string {
   return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }

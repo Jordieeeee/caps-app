@@ -1,513 +1,470 @@
-import { Pressable, StyleSheet, TextInput } from 'react-native';
-import { useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
-import { newClientId } from '@/collector/services/client-id';
 import { OfflineStorage } from '@/collector/services/offline-storage';
-import { PrinterService } from '@/collector/services/printer-service';
-import { formatPeso } from '@/shared/format/currency';
-import { FilterChips } from '@/shared/components/filter-chips';
-import { Icon, type IconName } from '@/shared/components/icon';
-import { ListEmpty } from '@/shared/components/list-states';
+import { RouteAccountService } from '@/collector/services/route-accounts';
+import { SyncService } from '@/collector/services/sync-service';
+import { useSession } from '@/shared/auth/auth-context';
+import { Icon } from '@/shared/components/icon';
+import { ListEmpty, ListError } from '@/shared/components/list-states';
+import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
+import { SkeletonList } from '@/shared/components/skeleton';
 import { SyncBadge } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
-import { ScreenContainer } from '@/shared/components/screen-container';
-import { PrintButton } from '@/shared/components/print-button';
+import { formatPeso } from '@/shared/format/currency';
+import { useAsync } from '@/shared/hooks/use-async';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
-import { MIN_TAP_TARGET, Radius } from '@/shared/theme/twd';
-
-interface Collection {
-  id: string;
-  collectorId: string;
-  accountNumber: string;
-  accountName: string;
-  amount: number;
-  paymentMethod: 'cash' | 'check' | 'electronic';
-  checkNumber?: string;
-  referenceNumber?: string;
-  collectionDate: string;
-  timestamp: number;
-  synced: boolean;
-}
-
-interface Collector {
-  id: string;
-  name: string;
-  route: string;
-}
+import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
+import { calculateBill } from '@/shared/utils/billing-calculator';
 
 /**
- * Payment method presentation, in one place.
+ * Daily Summary — what this collector has read today, and getting it to the office.
  *
- * These were emoji — 💵 for cash, 📝 for check, 💳 for electronic — rendered at
- * fontSize 24 as the card's primary visual. Emoji are the wrong tool for a
- * functional icon: they are a different vendor's artwork on every OS, they ignore
- * the theme because they carry their own colour, and a screen reader announces 💵
- * as "money with wings", which is not what a cash payment is called. The Lucide
- * set draws in the current text colour and says the same thing on every device.
+ * This screen used to be "Daily Collections": an Add Collection form with a cash
+ * amount, a payment method picker (Cash/Check/Electronic) and a Daily Report
+ * print button, filtered by a Select Collector chip row. Every part of that was
+ * modelling a job nobody does — TWD's collectors do not handle money, there is one
+ * collector per phone, and the office wants finished invoices rather than a cash
+ * tally. The screen now answers the two questions the shift actually ends on: how
+ * much of my route did I read, and has the office got it.
+ *
+ * Rows come from the real reading outbox, not from a mock list. A summary screen
+ * that invents its own readings would show twelve rows that have nothing to do
+ * with the meters this collector walked, and the Submit button under them would
+ * send something else entirely. The names and account numbers are the route's (see
+ * route-accounts), so they are Filipino names against WD-XXXXX accounts as
+ * specified — they just arrive by being read rather than by being hardcoded here.
  */
-const METHOD_ICON: Record<Collection['paymentMethod'], IconName> = {
-  cash: 'banknote',
-  check: 'file-text',
-  electronic: 'credit-card',
-};
 
-const METHOD_LABEL: Record<Collection['paymentMethod'], string> = {
-  cash: 'Cash',
-  check: 'Check',
-  electronic: 'Electronic',
-};
+interface ReadingRow {
+  /** The record's clientId — the sync key, and what a retry is scoped to. */
+  id: string;
+  accountNumber: string;
+  consumerName: string;
+  consumption: number;
+  amountDue: number;
+  synced: boolean;
+  timestamp: number;
+}
 
-const mockCollectors: Collector[] = [
-  { id: 'COL-001', name: 'Juan Dela Cruz', route: 'Downtown Route' },
-  { id: 'COL-002', name: 'Maria Santos', route: 'Residential North' },
-  { id: 'COL-003', name: 'Pedro Reyes', route: 'Industrial Zone' },
-];
+interface DailySummary {
+  rows: ReadingRow[];
+  accountsRead: number;
+  totalOnRoute: number;
+}
 
-const mockCollections: Collection[] = [
-  {
-    id: '1',
-    collectorId: 'COL-001',
-    accountNumber: 'WD-12345',
-    accountName: 'Carlos Garcia',
-    amount: 486.00,
-    paymentMethod: 'cash',
-    collectionDate: '2025-07-15',
-    timestamp: Date.now(),
-    synced: false,
-  },
-  {
-    id: '2',
-    collectorId: 'COL-001',
-    accountNumber: 'WD-12346',
-    accountName: 'Ana Martinez',
-    amount: 452.75,
-    paymentMethod: 'check',
-    checkNumber: '123456',
-    collectionDate: '2025-07-15',
-    timestamp: Date.now(),
-    synced: false,
-  },
-  {
-    id: '3',
-    collectorId: 'COL-002',
-    accountNumber: 'WD-12347',
-    accountName: 'Roberto Rodriguez',
-    amount: 1248.50,
-    paymentMethod: 'electronic',
-    referenceNumber: 'REF-789012',
-    collectionDate: '2025-07-15',
-    timestamp: Date.now(),
-    synced: true,
-  },
-];
+async function loadDailySummary(): Promise<DailySummary> {
+  const [accounts, readings] = await Promise.all([
+    RouteAccountService.getCached(),
+    OfflineStorage.getMeterReadings(),
+  ]);
 
-export default function DailyCollectionsScreen() {
-  const theme = useTheme();
-  const twd = useTwdTheme();
+  const today = new Date().toISOString().split('T')[0];
+  const nameFor = new Map(accounts.map((a) => [a.accountNumber, a.consumerName]));
+  const todays = readings.filter((r) => r.readingDate === today);
 
-  const [collections, setCollections] = useState<Collection[]>(mockCollections);
-  const [selectedCollectorId, setSelectedCollectorId] = useState<string | null>(null);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-  
-  // Form state
-  const [accountNumber, setAccountNumber] = useState('');
-  const [accountName, setAccountName] = useState('');
-  const [amount, setAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'check' | 'electronic'>('cash');
-  const [checkNumber, setCheckNumber] = useState('');
-  const [referenceNumber, setReferenceNumber] = useState('');
+  const rows: ReadingRow[] = todays
+    .map((r) => ({
+      id: r.id,
+      accountNumber: r.accountNumber,
+      // Falls back to the account number rather than "Unknown": a reading can
+      // outlive its route cache, and the number is still the thing the office
+      // looks the consumer up by.
+      consumerName: nameFor.get(r.accountNumber) ?? r.accountNumber,
+      consumption: r.consumption,
+      amountDue: calculateBill(r.consumption).totalAmountDue,
+      synced: r.synced,
+      timestamp: r.timestamp,
+    }))
+    // Most recent first — the collector is checking the meter they just left.
+    .sort((a, b) => b.timestamp - a.timestamp);
 
-  const selectedCollector = mockCollectors.find((c) => c.id === selectedCollectorId) ?? null;
-  const filteredCollections = selectedCollectorId
-    ? collections.filter((c) => c.collectorId === selectedCollectorId)
-    : collections;
+  return {
+    rows,
+    // Distinct accounts, not rows: re-reading a meter to correct it writes a second
+    // record, and it would be wrong to tell someone they have read 15 of 12
+    // accounts.
+    accountsRead: new Set(todays.map((r) => r.accountNumber)).size,
+    totalOnRoute: accounts.length,
+  };
+}
 
-  const totalCollected = filteredCollections.reduce((sum, c) => sum + c.amount, 0);
-  const cashCollections = filteredCollections.filter(c => c.paymentMethod === 'cash');
-  const checkCollections = filteredCollections.filter(c => c.paymentMethod === 'check');
-  const electronicCollections = filteredCollections.filter(c => c.paymentMethod === 'electronic');
+type Notice = { tone: 'success' | 'danger'; text: string };
+
+export default function DailySummaryScreen() {
+  const { sync } = useSession();
+  const theme = useTwdTheme();
+
+  const { state, reload } = useAsync(useCallback(() => loadDailySummary(), []));
+  const [submitting, setSubmitting] = useState(false);
+  const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
+  const [notice, setNotice] = useState<Notice | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      reload();
+    }, [reload])
+  );
+
+  const summary = useMemo(
+    () => (state.status === 'ready' ? state.data : null),
+    [state]
+  );
+
+  // Memoised for a stable identity — `submit` closes over it, and a fresh [] every
+  // render would rebuild the callback on every render.
+  const rows = useMemo(() => summary?.rows ?? [], [summary]);
+  const pending = rows.filter((r) => !r.synced);
+  const failedCount = rows.filter((r) => !r.synced && failedIds.has(r.id)).length;
+
+  const online = sync === 'online';
+  const canSubmit = pending.length > 0 && online && !submitting;
+
+  const disabledReason =
+    pending.length === 0
+      ? 'No pending records'
+      : !online
+        ? 'No connection'
+        : null;
 
   /**
-   * Validation used to be `if (!a || !b || !c) return;` — a bare early return with
-   * no state change, so tapping Save on an incomplete form did nothing at all: no
-   * message, no highlight, no movement. A field worker reads a dead button as a
-   * broken app and taps it again. The skill's UX guidance names this exactly
-   * ("Submit Feedback — don't: no feedback after submit"), and a silent failure is
-   * worse here than elsewhere, because the collector has cash in hand and needs to
-   * know whether it was recorded.
+   * Send the outbox, then work out what did not make it.
    *
-   * The save error path had the same problem one level down: `catch` logged to a
-   * console nobody in the field can read, and the form quietly stayed put.
+   * `SyncService` reports totals — `{ success, failed }` — and never says which
+   * records failed, so a per-row Failed chip cannot be read off the result. It can
+   * be derived: note which records were unsent before the attempt, and ask again
+   * afterwards. Anything still unsent that we just tried to send is a record that
+   * failed, and everything else is untouched. That keeps the whole thing inside
+   * this screen rather than growing a per-record error column in storage that every
+   * other screen would then have to interpret.
+   *
+   * The failed set is deliberately not persisted — see the `failed` descriptor in
+   * status-badge for why a red chip cannot survive a restart honestly.
    */
-  const handleAddCollection = async () => {
-    setFormError(null);
+  const submit = useCallback(async () => {
+    const attempted = rows.filter((r) => !r.synced).map((r) => r.id);
+    if (!attempted.length) return;
 
-    const missing: string[] = [];
-    if (!accountNumber.trim()) missing.push('account number');
-    if (!accountName.trim()) missing.push('account name');
-    if (!amount.trim()) missing.push('amount');
-    if (missing.length) {
-      setFormError(`Enter the ${missing.join(', ')} before saving.`);
-      return;
-    }
-
-    const parsed = Number.parseFloat(amount);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setFormError('Enter an amount greater than zero.');
-      return;
-    }
-
-    setSaving(true);
-    const newCollection: Collection = {
-      // This id is the server's primary key for the record (clientId, uniquely
-      // indexed, upserted on). It used to be `Date.now().toString()` — two
-      // collections saved in the same millisecond produced the same id, and the
-      // upsert would silently overwrite the first payment with the second.
-      id: newClientId('col'),
-      collectorId: selectedCollector?.id || 'COL-001',
-      accountNumber,
-      accountName,
-      amount: parsed,
-      paymentMethod,
-      checkNumber: paymentMethod === 'check' ? checkNumber : undefined,
-      referenceNumber: paymentMethod === 'electronic' ? referenceNumber : undefined,
-      collectionDate: new Date().toISOString().split('T')[0],
-      timestamp: Date.now(),
-      synced: false,
-    };
+    setSubmitting(true);
+    setNotice(null);
 
     try {
-      await OfflineStorage.saveCollection(newCollection);
-      setCollections([...collections, newCollection]);
-      
-      // Reset form
-      setAccountNumber('');
-      setAccountName('');
-      setAmount('');
-      setCheckNumber('');
-      setReferenceNumber('');
-      setShowAddForm(false);
-    } catch {
-      setFormError(
-        'Could not save this collection to the phone. Do not hand over a receipt — try again.'
-      );
-    } finally {
-      setSaving(false);
+      await SyncService.forceSyncNow();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      setNotice({
+        tone: 'danger',
+        text: message.includes('already in progress')
+          ? // Not a failure: the 30s background sync in the collector shell got there
+            // first, and these records are on their way. Saying "could not submit"
+            // here would send someone chasing a problem that is resolving itself.
+            'Already sending in the background. This will finish on its own — check back in a moment.'
+          : 'Could not reach TWD. Your readings are still saved on this phone. Try again when you have signal.',
+      });
+      setSubmitting(false);
+      return;
     }
-  };
 
-  // Both print paths go through PrintButton, which shares one preflight, one
-  // failure dialog, and one disabled-with-a-reason treatment across every screen
-  // that prints.
-  const dailyReportJob = () =>
-    PrinterService.print({
-      type: 'report',
-      title: 'DAILY COLLECTIONS REPORT',
-      content: [
-        `Date: ${new Date().toLocaleDateString()}`,
-        `Collector: ${selectedCollector?.name || 'All Collectors'}`,
-        `Total Collections: ${filteredCollections.length}`,
-        `Total Amount: ${formatPeso(totalCollected)}`,
-        '--------------------------------',
-        `Cash: ${formatPeso(cashCollections.reduce((sum, c) => sum + c.amount, 0))} (${cashCollections.length})`,
-        `Checks: ${formatPeso(checkCollections.reduce((sum, c) => sum + c.amount, 0))} (${checkCollections.length})`,
-        `Electronic: ${formatPeso(electronicCollections.reduce((sum, c) => sum + c.amount, 0))} (${electronicCollections.length})`,
-      ],
-      footer: 'End of Daily Report',
-    });
+    const stillUnsent = new Set(
+      (await OfflineStorage.getUnsyncedMeterReadings()).map((r) => r.id)
+    );
+    const failed = attempted.filter((id) => stillUnsent.has(id));
+    const sent = attempted.length - failed.length;
+
+    setFailedIds(new Set(failed));
+    setNotice(
+      failed.length === 0
+        ? {
+            tone: 'success',
+            text:
+              sent === 1
+                ? '1 reading sent to TWD.'
+                : `${sent} readings sent to TWD.`,
+          }
+        : {
+            tone: 'danger',
+            text:
+              sent > 0
+                ? `${sent} sent, ${failed.length} did not go through. The ones that failed are still saved on this phone.`
+                : `${failed.length} did not go through. They are still saved on this phone.`,
+          }
+    );
+
+    reload();
+    setSubmitting(false);
+  }, [rows, reload]);
 
   return (
-    <ScreenContainer>
-        <ScreenHeader title="Collections" subtitle="Today's payments, cash counted as you go" />
+    <ScreenContainer onRefresh={reload} refreshing={false}>
+      <ScreenHeader title="Daily Summary" subtitle="Today's meter readings" />
 
-        <ThemedView style={styles.collectorSelector}>
-          <ThemedText type="defaultBold" style={styles.sectionTitle}>
-            Select Collector
-          </ThemedText>
-          <FilterChips
-            chips={mockCollectors.map((c) => ({ id: c.id, label: c.name }))}
-            selectedId={selectedCollectorId}
-            onSelect={setSelectedCollectorId}
-            allLabel="All Collectors"
-            accessibilityLabel="Filter collections by collector"
+      <ScreenSection gap={Spacing.three}>
+        <View style={styles.cardRow}>
+          <SummaryCard
+            label="Accounts read"
+            value={summary ? `${summary.accountsRead}` : '—'}
+            caption={summary ? `of ${summary.totalOnRoute} on route` : undefined}
           />
-        </ThemedView>
+          <SummaryCard
+            label="Pending sync"
+            value={summary ? `${pending.length}` : '—'}
+            tone={pending.length > 0 ? theme.warning : undefined}
+            caption={pending.length > 0 ? 'not sent yet' : 'all sent'}
+          />
+        </View>
 
-        <ThemedView style={styles.summaryContainer}>
-          <ThemedView type="backgroundElement" style={styles.summaryCard}>
-            <ThemedText type="small" themeColor="textSecondary">
-              Total Collected
-            </ThemedText>
+        {summary && summary.totalOnRoute > 0 && (
+          <RouteProgress read={summary.accountsRead} total={summary.totalOnRoute} />
+        )}
+      </ScreenSection>
+
+      {notice && (
+        <ScreenSection>
+          <View
+            style={[
+              styles.notice,
+              {
+                borderColor: notice.tone === 'success' ? theme.success : theme.danger,
+                backgroundColor:
+                  notice.tone === 'success' ? theme.backgroundElement : theme.dangerSurface,
+              },
+            ]}
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite">
+            <Icon
+              name={notice.tone === 'success' ? 'check' : 'alert-triangle'}
+              size={20}
+              color={notice.tone === 'success' ? theme.success : theme.danger}
+            />
             <ThemedText
-              style={styles.summaryAmount}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}>
-              {formatPeso(totalCollected)}
+              type="small"
+              style={[
+                styles.noticeText,
+                { color: notice.tone === 'success' ? theme.success : theme.danger },
+              ]}>
+              {notice.text}
             </ThemedText>
-          </ThemedView>
-          <ThemedView type="backgroundElement" style={styles.summaryCard}>
-            <ThemedText type="small" themeColor="textSecondary">
-              Transactions
-            </ThemedText>
-            <ThemedText style={styles.summaryNumber} numberOfLines={1}>
-              {filteredCollections.length}
-            </ThemedText>
-          </ThemedView>
-        </ThemedView>
+          </View>
+        </ScreenSection>
+      )}
 
-        <ThemedView style={styles.actionsContainer}>
-          <TwdButton
-            label={showAddForm ? 'Cancel' : 'Add Collection'}
-            variant={showAddForm ? 'secondary' : 'primary'}
-            onPress={() => setShowAddForm(!showAddForm)}
-            style={styles.actionButton}
+      <ScreenSection gap={Spacing.three}>
+        {state.status === 'loading' && <SkeletonList count={3} label="Loading today's readings" />}
+
+        {state.status === 'error' && (
+          <ListError
+            title="Could not load today's readings"
+            body="The readings saved on this phone could not be read. They have not been lost — try again."
+            onRetry={reload}
           />
-          <PrintButton
-            label="Daily Report"
-            job={dailyReportJob}
-            style={styles.actionButton}
-            accessibilityHint="Prints today's collection totals to the thermal printer"
-          />
-        </ThemedView>
-
-        {showAddForm && (
-          <ThemedView type="backgroundElement" style={styles.formContainer}>
-            <ThemedText type="defaultBold" style={styles.formTitle}>
-              Add New Collection
-            </ThemedText>
-            
-            <ThemedText type="small" themeColor="textSecondary">
-              Account Number
-            </ThemedText>
-            <ThemedView type="backgroundElement" style={styles.inputContainer}>
-              <TextInput
-                style={[styles.input, { color: theme.text }]}
-                placeholder="Enter account number"
-                placeholderTextColor={theme.textSecondary}
-                value={accountNumber}
-                onChangeText={setAccountNumber}
-              />
-            </ThemedView>
-
-            <ThemedText type="small" themeColor="textSecondary">
-              Account Name
-            </ThemedText>
-            <ThemedView type="backgroundElement" style={styles.inputContainer}>
-              <TextInput
-                style={[styles.input, { color: theme.text }]}
-                placeholder="Enter account name"
-                placeholderTextColor={theme.textSecondary}
-                value={accountName}
-                onChangeText={setAccountName}
-              />
-            </ThemedView>
-
-            <ThemedText type="small" themeColor="textSecondary">
-              Amount (₱)
-            </ThemedText>
-            <ThemedView type="backgroundElement" style={styles.inputContainer}>
-              <TextInput
-                style={[styles.input, { color: theme.text }]}
-                placeholder="0.00"
-                placeholderTextColor={theme.textSecondary}
-                value={amount}
-                onChangeText={setAmount}
-                keyboardType="decimal-pad"
-              />
-            </ThemedView>
-
-            <ThemedText type="small" themeColor="textSecondary">
-              Payment Method
-            </ThemedText>
-            <ThemedView style={styles.paymentMethodContainer}>
-              {(['cash', 'check', 'electronic'] as const).map((method) => {
-                const selected = paymentMethod === method;
-                return (
-                  <Pressable
-                    key={method}
-                    onPress={() => setPaymentMethod(method)}
-                    accessibilityRole="button"
-                    accessibilityLabel={METHOD_LABEL[method]}
-                    accessibilityState={{ selected }}
-                    style={({ pressed }) => [
-                      styles.methodChip,
-                      {
-                        borderColor: selected ? twd.primary : twd.border,
-                        backgroundColor: selected
-                          ? twd.primarySubtle
-                          : pressed
-                            ? twd.backgroundSelected
-                            : 'transparent',
-                      },
-                    ]}>
-                    <Icon
-                      name={METHOD_ICON[method]}
-                      size={18}
-                      color={selected ? twd.primary : twd.textSecondary}
-                    />
-                    <ThemedText
-                      type="small"
-                      style={selected ? { color: twd.primary } : undefined}>
-                      {METHOD_LABEL[method]}
-                    </ThemedText>
-                  </Pressable>
-                );
-              })}
-            </ThemedView>
-
-            {paymentMethod === 'check' && (
-              <>
-                <ThemedText type="small" themeColor="textSecondary">
-                  Check Number
-                </ThemedText>
-                <ThemedView type="backgroundElement" style={styles.inputContainer}>
-                  <TextInput
-                    style={[styles.input, { color: theme.text }]}
-                    placeholder="Enter check number"
-                    placeholderTextColor={theme.textSecondary}
-                    value={checkNumber}
-                    onChangeText={setCheckNumber}
-                  />
-                </ThemedView>
-              </>
-            )}
-
-            {paymentMethod === 'electronic' && (
-              <>
-                <ThemedText type="small" themeColor="textSecondary">
-                  Reference Number
-                </ThemedText>
-                <ThemedView type="backgroundElement" style={styles.inputContainer}>
-                  <TextInput
-                    style={[styles.input, { color: theme.text }]}
-                    placeholder="Enter reference number"
-                    placeholderTextColor={theme.textSecondary}
-                    value={referenceNumber}
-                    onChangeText={setReferenceNumber}
-                  />
-                </ThemedView>
-              </>
-            )}
-
-            {formError && (
-              <ThemedView
-                style={[
-                  styles.formError,
-                  { backgroundColor: twd.dangerSurface, borderColor: twd.danger },
-                ]}
-                accessibilityRole="alert"
-                accessibilityLiveRegion="assertive">
-                <Icon name="alert-triangle" size={18} color={twd.danger} />
-                <ThemedText type="small" style={[styles.formErrorText, { color: twd.danger }]}>
-                  {formError}
-                </ThemedText>
-              </ThemedView>
-            )}
-
-            <TwdButton label="Save Collection" busy={saving} busyLabel="Saving…" onPress={() => void handleAddCollection()} />
-          </ThemedView>
         )}
 
-        <ThemedView style={styles.collectionsWrapper}>
-          <ThemedText type="defaultBold" style={styles.sectionTitle}>
-            Today&apos;s Collections
-          </ThemedText>
-          {filteredCollections.length === 0 && (
-            <ListEmpty
-              icon="banknote"
-              title="No collections yet today"
-              body={
-                selectedCollector
-                  ? `Nothing recorded for ${selectedCollector.name} today. Collections you add are saved on this phone straight away.`
-                  : 'Nothing recorded yet today. Collections you add are saved on this phone straight away, with or without signal.'
-              }
-              action={{ label: 'Add Collection', onPress: () => setShowAddForm(true) }}
+        {state.status === 'ready' && rows.length === 0 && (
+          <ListEmpty
+            icon="gauge"
+            title="No readings yet today"
+            body="Complete meter readings on your route to see them here."
+          />
+        )}
+
+        {rows.map((row) => (
+          <ReadingCard
+            key={row.id}
+            row={row}
+            failed={!row.synced && failedIds.has(row.id)}
+            busy={submitting}
+            onRetry={() => void submit()}
+          />
+        ))}
+
+        {failedCount > 0 && (
+          <Pressable
+            onPress={() => void submit()}
+            disabled={submitting || !online}
+            accessibilityRole="button"
+            accessibilityLabel={`Retry ${failedCount} failed ${failedCount === 1 ? 'reading' : 'readings'}`}
+            style={styles.retryAll}>
+            <Icon name="refresh" size={16} color={theme.danger} />
+            <ThemedText type="smallBold" style={{ color: theme.danger }}>
+              Retry failed ({failedCount})
+            </ThemedText>
+          </Pressable>
+        )}
+      </ScreenSection>
+
+      <ScreenSection gap={Spacing.two}>
+        <TwdButton
+          label="Submit to Admin"
+          icon="refresh"
+          busy={submitting}
+          busyLabel="Submitting…"
+          disabled={!canSubmit}
+          onPress={() => void submit()}
+          accessibilityHint={
+            disabledReason ??
+            'Sends today’s readings and their calculated invoices to the TWD office'
+          }
+        />
+        {disabledReason && (
+          <View style={styles.hint}>
+            <Icon
+              name={disabledReason === 'No connection' ? 'cloud-off' : 'check'}
+              size={14}
+              color={theme.textSecondary}
             />
-          )}
-
-          {filteredCollections.map((collection) => (
-            <ThemedView key={collection.id} type="backgroundElement" style={styles.collectionCard}>
-              <ThemedView style={styles.cardHeader}>
-                <Icon name={METHOD_ICON[collection.paymentMethod]} size={24} color={twd.primary} />
-                <ThemedView style={styles.headerText}>
-                  <ThemedText type="defaultBold" style={styles.cardTitle}>
-                    {collection.accountNumber}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {collection.accountName}
-                  </ThemedText>
-                </ThemedView>
-                <SyncBadge status={collection.synced ? 'synced' : 'pending'} />
-              </ThemedView>
-
-              <ThemedView style={styles.cardDetails}>
-                <ThemedView style={styles.detailRow}>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Amount
-                  </ThemedText>
-                  <ThemedText type="defaultBold">{formatPeso(collection.amount)}</ThemedText>
-                </ThemedView>
-                <ThemedView style={styles.detailRow}>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Method
-                  </ThemedText>
-                  <ThemedText type="small">{METHOD_LABEL[collection.paymentMethod]}</ThemedText>
-                </ThemedView>
-                {collection.checkNumber && (
-                  <ThemedView style={styles.detailRow}>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      Check # 
-                    </ThemedText>
-                    <ThemedText type="small">{collection.checkNumber}</ThemedText>
-                  </ThemedView>
-                )}
-                {collection.referenceNumber && (
-                  <ThemedView style={styles.detailRow}>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      Reference
-                    </ThemedText>
-                    <ThemedText type="small">{collection.referenceNumber}</ThemedText>
-                  </ThemedView>
-                )}
-              </ThemedView>
-
-              <ThemedView style={styles.cardActions}>
-                <PrintButton
-                  label="Print Receipt"
-                  job={() => PrinterService.printCollectionReceipt(collection)}
-                  style={styles.receiptButton}
-                  accessibilityHint={`Prints a receipt for ${collection.accountName} on the thermal printer`}
-                />
-              </ThemedView>
-            </ThemedView>
-          ))}
-        </ThemedView>
+            <ThemedText type="small" themeColor="textSecondary">
+              {disabledReason === 'No connection'
+                ? 'No connection — your readings are safe on this phone and will send themselves when you get signal.'
+                : 'No pending records — everything read today is already with TWD.'}
+            </ThemedText>
+          </View>
+        )}
+      </ScreenSection>
     </ScreenContainer>
   );
 }
 
+function SummaryCard({
+  label,
+  value,
+  caption,
+  tone,
+}: {
+  label: string;
+  value: string;
+  caption?: string;
+  tone?: string;
+}) {
+  return (
+    <ThemedView type="backgroundElement" style={styles.summaryCard}>
+      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+        {label}
+      </ThemedText>
+      <ThemedText style={[styles.summaryValue, tone ? { color: tone } : null]} numberOfLines={1}>
+        {value}
+      </ThemedText>
+      {caption && (
+        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+          {caption}
+        </ThemedText>
+      )}
+    </ThemedView>
+  );
+}
+
+/**
+ * Route completion, as a bar.
+ *
+ * Announced as a progressbar with a text value, because the bar itself is colour
+ * and geometry — neither of which a screen reader can read, and neither of which
+ * survives direct sunlight especially well. The sentence under it is the real
+ * answer; the bar is the glance.
+ */
+function RouteProgress({ read, total }: { read: number; total: number }) {
+  const theme = useTwdTheme();
+  const ratio = total > 0 ? Math.min(read / total, 1) : 0;
+  const complete = read >= total && total > 0;
+
+  return (
+    <View
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: total, now: read }}
+      accessibilityLabel={`${read} of ${total} accounts read today`}
+      style={styles.progressWrap}>
+      <View style={[styles.progressTrack, { backgroundColor: theme.backgroundSelected }]}>
+        <View
+          style={[
+            styles.progressFill,
+            {
+              width: `${ratio * 100}%`,
+              backgroundColor: complete ? theme.success : theme.primary,
+            },
+          ]}
+        />
+      </View>
+      <ThemedText type="small" themeColor="textSecondary">
+        {read} of {total} accounts read today
+      </ThemedText>
+    </View>
+  );
+}
+
+function ReadingCard({
+  row,
+  failed,
+  busy,
+  onRetry,
+}: {
+  row: ReadingRow;
+  failed: boolean;
+  busy: boolean;
+  onRetry: () => void;
+}) {
+  const theme = useTwdTheme();
+
+  return (
+    <ThemedView
+      type="backgroundElement"
+      style={[styles.readingCard, failed ? { borderColor: theme.danger, borderWidth: 2 } : null]}>
+      <View style={styles.readingHeader}>
+        <View style={styles.readingHeaderText}>
+          <ThemedText type="defaultBold" numberOfLines={1}>
+            {row.accountNumber}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+            {row.consumerName}
+          </ThemedText>
+        </View>
+        <SyncBadge status={row.synced ? 'synced' : failed ? 'failed' : 'pending'} />
+      </View>
+
+      <View style={[styles.readingFooter, { borderTopColor: theme.border }]}>
+        <View style={styles.readingItem}>
+          <ThemedText type="small" themeColor="textSecondary">
+            Consumption
+          </ThemedText>
+          <ThemedText type="defaultBold">{row.consumption} m³</ThemedText>
+        </View>
+        <View style={styles.readingItem}>
+          <ThemedText type="small" themeColor="textSecondary">
+            Amount due
+          </ThemedText>
+          <ThemedText type="defaultBold" numberOfLines={1}>
+            {formatPeso(row.amountDue)}
+          </ThemedText>
+        </View>
+
+        {failed && (
+          <Pressable
+            onPress={onRetry}
+            disabled={busy}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel={`Retry sending the reading for ${row.accountNumber}`}
+            style={({ pressed }) => [
+              styles.retryIcon,
+              {
+                borderColor: theme.danger,
+                backgroundColor: pressed ? theme.dangerSurface : 'transparent',
+                opacity: busy ? 0.5 : 1,
+              },
+            ]}>
+            <Icon name="refresh" size={18} color={theme.danger} />
+          </Pressable>
+        )}
+      </View>
+    </ThemedView>
+  );
+}
+
 const styles = StyleSheet.create({
-  collectorSelector: {
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    marginBottom: Spacing.two,
-  },
-  summaryContainer: {
+  cardRow: {
     flexDirection: 'row',
     gap: Spacing.three,
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
   },
   summaryCard: {
     flex: 1,
@@ -516,63 +473,24 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
     alignItems: 'center',
   },
-  // fontSize with its own lineHeight — see the note in service-reports.tsx. These
-  // previously inherited `title`'s 52px line box onto a 20px glyph.
-  summaryAmount: {
-    fontSize: 22,
-    lineHeight: 28,
+  // fontSize with its own lineHeight — these previously inherited `title`'s 52px
+  // line box onto a 20px glyph and collided when they wrapped.
+  summaryValue: {
+    fontSize: 26,
+    lineHeight: 32,
     fontWeight: '700',
   },
-  summaryNumber: {
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '700',
+  progressWrap: { gap: Spacing.two },
+  progressTrack: {
+    height: 10,
+    borderRadius: Radius.pill,
+    overflow: 'hidden',
   },
-  actionsContainer: {
-    flexDirection: 'row',
-    gap: Spacing.three,
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
+  progressFill: {
+    height: '100%',
+    borderRadius: Radius.pill,
   },
-  actionButton: {
-    flex: 1,
-  },
-  formContainer: {
-    marginHorizontal: Spacing.four,
-    marginBottom: Spacing.four,
-    borderRadius: Radius.card,
-    padding: Spacing.four,
-    gap: Spacing.three,
-  },
-  formTitle: {
-    fontSize: 16,
-    marginBottom: Spacing.two,
-  },
-  inputContainer: {
-    borderRadius: Radius.field,
-    padding: Spacing.three,
-  },
-  input: {
-    fontSize: 16,
-  },
-  paymentMethodContainer: {
-    flexDirection: 'row',
-    gap: Spacing.two,
-  },
-  methodChip: {
-    flex: 1,
-    // Was padding: 8 around 20px text — a 36px target against the 48dp floor these
-    // get tapped at one-handed, in the rain, wearing gloves.
-    minHeight: MIN_TAP_TARGET,
-    borderRadius: Radius.field,
-    paddingHorizontal: Spacing.two,
-    gap: Spacing.one,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-  },
-  formError: {
+  notice: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: Spacing.two,
@@ -580,40 +498,45 @@ const styles = StyleSheet.create({
     borderRadius: Radius.card,
     borderWidth: 2,
   },
-  formErrorText: { flex: 1 },
-  collectionsWrapper: {
-    gap: Spacing.three,
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
-  },
-  collectionCard: {
+  noticeText: { flex: 1 },
+  readingCard: {
     borderRadius: Radius.card,
-    padding: Spacing.four,
-    gap: Spacing.three,
+    padding: Spacing.three,
+    gap: Spacing.two,
   },
-  cardHeader: {
+  readingHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
   },
-  headerText: {
-    flex: 1,
-  },
-  cardTitle: {
-    fontSize: 16,
-  },
-  cardDetails: {
-    gap: Spacing.two,
-  },
-  detailRow: {
+  readingHeaderText: { flex: 1 },
+  readingFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.four,
+    borderTopWidth: 1,
+    paddingTop: Spacing.two,
   },
-  cardActions: {
+  readingItem: { gap: Spacing.half },
+  retryIcon: {
+    marginLeft: 'auto',
+    width: MIN_TAP_TARGET,
+    height: MIN_TAP_TARGET,
+    borderRadius: Radius.field,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryAll: {
     flexDirection: 'row',
-    gap: Spacing.two,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.one,
+    minHeight: MIN_TAP_TARGET,
   },
-  receiptButton: {
-    flex: 1,
+  hint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.one,
   },
 });

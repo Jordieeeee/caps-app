@@ -13,14 +13,30 @@ import { Stack } from 'expo-router';
  * navigation bar — the router's filename leaking into a government app's UI.
  * A screen added here without a Stack.Screen entry will do the same, so the list
  * below is not optional bookkeeping.
+ *
+ * The reconnection and disconnection folders deliberately have no `_layout` of
+ * their own, so their list and confirm screens are children of *this* stack rather
+ * than of a nested one. A nested stack would render its own header underneath this
+ * one — two bars, two back buttons, for what is one push.
+ *
+ * The `[id]` titles are placeholders: each confirm screen sets its own at render
+ * time. The entry still has to exist, or the fallback prints "[id]".
  */
 export default function CollectorMoreLayout() {
   return (
     <Stack screenOptions={{ headerShown: true, headerBackTitle: 'More' }}>
       <Stack.Screen name="index" options={{ title: 'More' }} />
       <Stack.Screen name="sync-status" options={{ title: 'Sync Status' }} />
-      <Stack.Screen name="reconnections" options={{ title: 'Reconnections' }} />
-      <Stack.Screen name="disconnections" options={{ title: 'Disconnections' }} />
+      <Stack.Screen name="reconnections/index" options={{ title: 'Reconnections' }} />
+      <Stack.Screen
+        name="reconnections/[id]"
+        options={{ title: 'Reconnection', headerBackTitle: 'Orders' }}
+      />
+      <Stack.Screen name="disconnections/index" options={{ title: 'Disconnections' }} />
+      <Stack.Screen
+        name="disconnections/[id]"
+        options={{ title: 'Disconnection', headerBackTitle: 'Orders' }}
+      />
       <Stack.Screen name="printer" options={{ title: 'Printer' }} />
     </Stack>
   );

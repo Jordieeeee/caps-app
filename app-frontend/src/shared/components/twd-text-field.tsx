@@ -5,6 +5,7 @@ import {
   View,
   type TextInputProps,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from 'react-native';
 
@@ -25,6 +26,17 @@ interface TwdTextFieldProps extends Omit<TextInputProps, 'style'> {
    */
   trailingAccessory?: ReactNode;
   containerStyle?: StyleProp<ViewStyle>;
+  /**
+   * Type scale for the input text only.
+   *
+   * `style` stays off the public API — a caller reaching for it wants the field's
+   * fill, border or radius, and those are the parts that must not drift between
+   * screens. Size is the one exception: the meter reading is a number typed at
+   * arm's length onto a phone held against a wall, and it earns a bigger glyph
+   * than a password field. Pass fontSize *and* lineHeight together; this codebase
+   * has been bitten twice by overriding one and inheriting the other.
+   */
+  inputStyle?: StyleProp<TextStyle>;
 }
 
 /**
@@ -41,7 +53,7 @@ interface TwdTextFieldProps extends Omit<TextInputProps, 'style'> {
  * of the ones that matter here.
  */
 export const TwdTextField = forwardRef<TextInput, TwdTextFieldProps>(function TwdTextField(
-  { label, error, hint, trailingAccessory, containerStyle, onFocus, onBlur, ...inputProps },
+  { label, error, hint, trailingAccessory, containerStyle, inputStyle, onFocus, onBlur, ...inputProps },
   ref
 ) {
   const theme = useTwdTheme();
@@ -69,7 +81,7 @@ export const TwdTextField = forwardRef<TextInput, TwdTextFieldProps>(function Tw
         ]}>
         <TextInput
           ref={ref}
-          style={[styles.input, { color: theme.text }]}
+          style={[styles.input, { color: theme.text }, inputStyle]}
           placeholderTextColor={theme.textSecondary}
           onFocus={(e) => {
             setFocused(true);

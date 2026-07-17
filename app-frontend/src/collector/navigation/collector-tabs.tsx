@@ -35,9 +35,11 @@ export default function CollectorTabs() {
         <NativeTabs.Trigger.Icon sf={{ default: 'house', selected: 'house.fill' }} md="home" />
       </NativeTabs.Trigger>
 
-      {/* A dial. Meter readers recognise a gauge; they do not recognise a house. */}
+      {/* "Route", not "Readings": the tab holds the accounts still to be walked,
+          not a log of the ones already done. A dial, because meter readers
+          recognise a gauge and do not recognise a house. */}
       <NativeTabs.Trigger name="reading-reports">
-        <NativeTabs.Trigger.Label>Readings</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>Route</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="gauge.with.dots.needle.bottom.50percent" md="speed" />
       </NativeTabs.Trigger>
 
