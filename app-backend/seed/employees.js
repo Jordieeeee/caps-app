@@ -21,34 +21,31 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const connectDB = require('../config/db');
-const User = require('../models/User');
+const Collector = require('../models/Collector');
 
 /**
  * Must match the registration flow exactly, or seeded users cannot log in.
  *
- * `User.createWithPassword` hashes with bcryptjs at cost 10 (models/User.js), and
- * `comparePassword` verifies against it. This script cannot call
+ * `Collector.createWithPassword` hashes with bcryptjs at cost 10 (models/Collector.js),
+ * and `comparePassword` verifies against it. This script cannot call
  * `createWithPassword` — that method issues an insert, and we need an upsert — so
  * the cost is restated here and pinned by the check below.
  */
 const SALT_ROUNDS = 10;
 
 /**
- * Role and status are the schema's spellings, not the spec's.
+ * Status is the schema's spelling, not the spec's.
  *
- * The brief asked for `role: "collector"` and `status: "Active"`. Both are invalid
- * against the User enums (`'Collector'` / `'active'`), and — because `updateOne`
- * skips validators unless told otherwise — both would have been written silently
- * and bricked all five accounts:
+ * The brief asked for `status: "Active"`, invalid against the Collector enum
+ * (`'active'`), and — because `updateOne` skips validators unless told
+ * otherwise — would have been written silently and bricked all five accounts:
+ * `assertActive()` compares `!== 'active'` → 403 ACCOUNT_DISABLED.
  *
- *   status "Active" → assertActive() compares `!== 'active'` → 403 ACCOUNT_DISABLED
- *   role "collector" → REFRESH_TTL_MS["collector"] is undefined → issue(id, undefined)
- *                      → new Date(NaN) → cast failure on required expiresAt → 500
- *
- * `runValidators: true` below is what turns a future casing slip into a loud seed
- * failure instead of five field staff locked out on a Monday morning.
+ * `runValidators: true` below is what turns a future casing slip into a loud
+ * seed failure instead of five field staff locked out on a Monday morning.
+ * `role` itself is no longer written here at all — `Collector.role` is a fixed
+ * field (see models/Collector.js), so there's nothing left to mis-spell.
  */
-const ROLE = 'Collector';
 const STATUS = 'active';
 
 /**
@@ -170,7 +167,7 @@ async function seed() {
   for (const { password, zone, routeId, ...fields } of COLLECTORS) {
     const email = normaliseEmail(fields.email);
 
-    const result = await User.updateOne(
+    const result = await Collector.updateOne(
       { email },
       {
         $set: {
@@ -179,7 +176,6 @@ async function seed() {
           // A fresh salt per run, so the hash differs every time even though the
           // password does not. Idempotent in effect, not byte-for-byte.
           passwordHash: await bcrypt.hash(password, SALT_ROUNDS),
-          role: ROLE,
           status: STATUS,
           // What the app keys on: `routeIds` is the schema's "collectors: assigned
           // routes", read to show a collector their route and to stamp routeId onto

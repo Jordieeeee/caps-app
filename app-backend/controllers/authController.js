@@ -1,8 +1,14 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Collector = require('../models/Collector');
+const Consumer = require('../models/Consumer');
 const RefreshToken = require('../models/RefreshToken');
 const httpError = require('../utils/httpError');
 const ErrorCodes = require('../utils/errorCodes');
+
+/** Which model a role's documents live in — the single source of truth for
+ * every role-dispatch in this file (login, refresh, me). */
+const MODEL_BY_ROLE = { Collector, Consumer, Admin: User };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -33,7 +39,7 @@ function signAccessToken(user) {
 /** Issue a fresh access/refresh pair and describe the session to the client. */
 async function issueSession(user) {
   const ttl = REFRESH_TTL_MS[user.role];
-  const refreshToken = await RefreshToken.issue(user.id, ttl);
+  const refreshToken = await RefreshToken.issue(user.id, ttl, user.role);
   return {
     accessToken: signAccessToken(user),
     refreshToken,
@@ -68,15 +74,28 @@ function assertActive(user) {
  */
 exports.register = async (req, res) => {
   const { name, email, password } = req.body;
-  if (await User.findByEmail(email)) throw httpError(409, 'Email already registered');
+  // Email must be unique across all three collections now that each role
+  // lives apart — one index can no longer cover all of them.
+  if (
+    (await Collector.findByEmail(email)) ||
+    (await Consumer.findByEmail(email)) ||
+    (await User.findByEmail(email))
+  ) {
+    throw httpError(409, 'Email already registered');
+  }
 
-  const user = await User.createWithPassword({ name, email, password, role: 'Consumer' });
-  res.status(201).json(await issueSession(user));
+  const consumer = await Consumer.createWithPassword({ name, email, password });
+  res.status(201).json(await issueSession(consumer));
 };
 
 exports.login = async (req, res) => {
   const { email, password } = req.body;
-  const user = await User.findByEmail(email);
+  // The client never says which role it's logging in as (single unified login
+  // form), so try each collection in turn until one has this email.
+  const user =
+    (await Collector.findByEmail(email)) ||
+    (await Consumer.findByEmail(email)) ||
+    (await User.findByEmail(email));
 
   // Verify the password before considering account status. Reporting
   // ACCOUNT_DISABLED to someone who has not proven they own the account would
@@ -125,7 +144,15 @@ exports.refresh = async (req, res) => {
 
   // Re-read the user on every refresh: this is the point at which an account
   // deactivated mid-session actually loses access.
-  const user = await User.findById(stored.user);
+  //
+  // `stored.role` says which collection to check. Tokens issued before this
+  // field existed have none — fall back to trying all three, same order as
+  // login, rather than requiring a backfill migration.
+  const user = stored.role
+    ? await MODEL_BY_ROLE[stored.role].findById(stored.user)
+    : (await Collector.findById(stored.user)) ||
+      (await Consumer.findById(stored.user)) ||
+      (await User.findById(stored.user));
   if (!user) throw invalid();
   if (user.status !== 'active') {
     await RefreshToken.revokeAllForUser(user.id);
@@ -153,7 +180,8 @@ exports.logout = async (req, res) => {
 };
 
 exports.me = async (req, res) => {
-  const user = await User.findById(req.user.sub);
+  const Model = MODEL_BY_ROLE[req.user.role] || User;
+  const user = await Model.findById(req.user.sub);
   if (!user) throw httpError(404, 'User not found');
   assertActive(user);
   res.json({ user });

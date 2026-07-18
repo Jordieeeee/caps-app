@@ -4,10 +4,10 @@ const accountSchema = new mongoose.Schema(
   {
     accountNumber: { type: String, required: true, unique: true },
     address: { type: String, required: true },
-    type: { type: String, enum: ['residential', 'commercial'], required: true },
+    type: { type: String, enum: ['residential', 'commercial', 'government'], required: true },
     status: { type: String, enum: ['active', 'inactive'], default: 'active' },
     // Consumers who have linked this account (a shared meter may have several).
-    consumerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    consumerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Consumer' }],
     linkedDate: { type: String },
   },
   { timestamps: true }

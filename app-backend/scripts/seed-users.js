@@ -18,6 +18,10 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 const connectDB = require('../config/db');
 const User = require('../models/User');
+const Collector = require('../models/Collector');
+const Consumer = require('../models/Consumer');
+
+const MODEL_BY_ROLE = { Collector, Consumer };
 
 const SEED_USERS = [
   {
@@ -25,6 +29,7 @@ const SEED_USERS = [
     email: 'collector@twd.test',
     password: 'collector123',
     role: 'Collector',
+    employeeId: 'COL-DEV-001',
     routeIds: ['R-01', 'R-02'],
   },
   {
@@ -51,17 +56,23 @@ async function seed() {
 
   await connectDB(process.env.MONGO_URI);
 
-  for (const { password, ...fields } of SEED_USERS) {
-    const existing = await User.findByEmail(fields.email);
+  for (const { password, role, ...fields } of SEED_USERS) {
+    // Collector/Consumer each live in their own collection now — role picks
+    // the model, but Collector.role/Consumer.role are fixed/immutable, so
+    // role isn't part of the fields written for them (only for User/Admin).
+    const Model = MODEL_BY_ROLE[role] || User;
+    const modelFields = Model === User ? { ...fields, role } : fields;
+
+    const existing = await Model.findByEmail(fields.email);
     if (existing) {
       // Reset rather than skip, so a forgotten seed password is always recoverable.
-      Object.assign(existing, fields);
+      Object.assign(existing, modelFields);
       existing.passwordHash = await require('bcryptjs').hash(password, 10);
       await existing.save();
-      console.log(`updated  ${fields.role.padEnd(9)} ${fields.email}`);
+      console.log(`updated  ${role.padEnd(9)} ${fields.email}`);
     } else {
-      await User.createWithPassword({ ...fields, password });
-      console.log(`created  ${fields.role.padEnd(9)} ${fields.email}`);
+      await Model.createWithPassword({ ...modelFields, password });
+      console.log(`created  ${role.padEnd(9)} ${fields.email}`);
     }
   }
 

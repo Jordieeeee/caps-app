@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const notificationSchema = new mongoose.Schema(
   {
-    consumerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    consumerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Consumer', required: true },
     accountNumber: { type: String },
     kind: {
       type: String,

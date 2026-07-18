@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const feedbackSchema = new mongoose.Schema(
   {
-    consumerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    consumerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Consumer', required: true },
     type: {
       type: String,
       enum: ['billing', 'service-quality', 'system-issue', 'other'],

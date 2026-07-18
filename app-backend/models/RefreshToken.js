@@ -16,7 +16,14 @@ const mongoose = require('mongoose');
 const refreshTokenSchema = new mongoose.Schema(
   {
     tokenHash: { type: String, required: true, unique: true, index: true },
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    user: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
+    /**
+     * Which collection `user` resolves against — 'Consumer' or a User role
+     * ('Collector'/'Admin'). Not required: tokens issued before this field
+     * existed have none, and `refresh` (authController.js) falls back to
+     * trying both collections when it's missing rather than needing a backfill.
+     */
+    role: { type: String, enum: ['Collector', 'Consumer', 'Admin'] },
     expiresAt: { type: Date, required: true },
     revokedAt: { type: Date, default: null },
     /** Set when this token is rotated, so a replay of the old token is detectable. */
@@ -34,11 +41,12 @@ refreshTokenSchema.statics.hash = function hashToken(raw) {
 };
 
 /** Generate a new opaque token and persist its hash. Returns the raw token — the only time it exists in plaintext. */
-refreshTokenSchema.statics.issue = async function issue(userId, ttlMs) {
+refreshTokenSchema.statics.issue = async function issue(userId, ttlMs, role) {
   const raw = crypto.randomBytes(32).toString('hex');
   await this.create({
     tokenHash: this.hash(raw),
     user: userId,
+    role,
     expiresAt: new Date(Date.now() + ttlMs),
   });
   return raw;
