@@ -18,6 +18,33 @@ const userSchema = new mongoose.Schema(
     status: { type: String, enum: ['active', 'disabled'], default: 'active', required: true },
     routeIds: [{ type: String }], // collectors: assigned routes
     accountNumbers: [{ type: String }], // consumers: linked account numbers
+
+    /**
+     * Human-readable label for the collector's assigned area, e.g. "Zone 1 - Poblacion".
+     *
+     * Display only. `routeIds` remains the identifier the app keys on — it is what
+     * stamps `routeId` onto each meter reading — and this must never be used in its
+     * place: it is not unique, not enumerated, and a collector with two routes has
+     * only one zone string to describe both.
+     */
+    zone: { type: String, trim: true },
+
+    /**
+     * Staff HR fields. Collectors and Admins only — a Consumer has none of them.
+     *
+     * `sparse` on employeeId is load-bearing, not decoration. A unique index treats
+     * a missing field as null, and null collides with null: without sparse, the
+     * *second* Consumer to enrol would be rejected by a duplicate-key error on a
+     * field their account is never supposed to have. The index then only covers
+     * documents where employeeId actually exists, which is the constraint we
+     * actually want — staff IDs unique among staff.
+     */
+    employeeId: { type: String, unique: true, sparse: true, trim: true },
+    phone: { type: String, trim: true },
+    /** `YYYY-MM-DD`. A date, not a Date: it is a calendar fact with no time or
+     *  timezone, and storing it as a Date invites a UTC shift to move someone's
+     *  hire date a day earlier for everyone west of Manila. */
+    dateHired: { type: String, trim: true },
   },
   { timestamps: true }
 );

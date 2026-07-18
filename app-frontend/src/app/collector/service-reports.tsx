@@ -303,19 +303,23 @@ export default function ServiceReportsScreen() {
 								<ThemedText type="small" themeColor="textSecondary">
 									Address
 								</ThemedText>
-								<ThemedText type="small">{invoice.address}</ThemedText>
+								<ThemedText type="small" style={styles.detailValue}>
+									{invoice.address}
+								</ThemedText>
 							</ThemedView>
 							<ThemedView style={styles.detailRow}>
 								<ThemedText type="small" themeColor="textSecondary">
 									Billing Period
 								</ThemedText>
-								<ThemedText type="small">{invoice.billingPeriod}</ThemedText>
+								<ThemedText type="small" style={styles.detailValue}>
+									{invoice.billingPeriod}
+								</ThemedText>
 							</ThemedView>
 							<ThemedView style={styles.detailRow}>
 								<ThemedText type="small" themeColor="textSecondary">
 									Amount
 								</ThemedText>
-								<ThemedText type="defaultBold">
+								<ThemedText type="defaultBold" style={styles.detailValue}>
 									{formatPeso(invoice.amount)}
 								</ThemedText>
 							</ThemedView>
@@ -323,7 +327,9 @@ export default function ServiceReportsScreen() {
 								<ThemedText type="small" themeColor="textSecondary">
 									Due Date
 								</ThemedText>
-								<ThemedText type="small">{invoice.dueDate}</ThemedText>
+								<ThemedText type="small" style={styles.detailValue}>
+									{invoice.dueDate}
+								</ThemedText>
 							</ThemedView>
 						</ThemedView>
 
@@ -434,6 +440,24 @@ const styles = StyleSheet.create({
 	detailRow: {
 		flexDirection: "row",
 		justifyContent: "space-between",
+		alignItems: "flex-start",
+		gap: Spacing.three,
+	},
+	/**
+	 * The value column must be allowed to shrink and wrap.
+	 *
+	 * Without `flex: 1` here a long address reports its full unwrapped width as the
+	 * row's intrinsic width, which propagates up through the card to the screen
+	 * container and — because that container centres overflow rather than clipping
+	 * it — eats the horizontal gutter symmetrically, so the card's edge distance
+	 * silently tracked whichever invoices the active filter happened to show.
+	 * Bounding the value's width makes the address wrap inside the card instead,
+	 * so the card can never exceed the viewport and the gutter is always the
+	 * section's paddingHorizontal.
+	 */
+	detailValue: {
+		flex: 1,
+		textAlign: "right",
 	},
 	meterSection: {
 		paddingTop: Spacing.two,
