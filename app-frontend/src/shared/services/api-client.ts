@@ -101,6 +101,10 @@ function normalizeSession(body: any): StoredSession {
       status: body.user.status ?? 'active',
       routeIds: body.user.routeIds ?? [],
       accountNumbers: body.user.accountNumbers ?? [],
+      employeeId: body.user.employeeId,
+      zone: body.user.zone,
+      phone: body.user.phone,
+      dateHired: body.user.dateHired,
     },
   };
 }

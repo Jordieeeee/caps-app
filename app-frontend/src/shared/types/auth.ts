@@ -31,6 +31,14 @@ export interface AuthUser {
    * may collapse this to a single "current account".
    */
   accountNumbers?: string[];
+  /** Collector: employee ID */
+  employeeId?: string;
+  /** Collector: zone/area assignment */
+  zone?: string;
+  /** Collector: phone number */
+  phone?: string;
+  /** Collector: hire date */
+  dateHired?: string;
 }
 
 /** Exactly what we persist to the keychain. */

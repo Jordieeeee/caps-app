@@ -9,14 +9,13 @@
  * seed password is always recoverable — the corollary being that a password
  * changed elsewhere gets reset by the next run.
  *
- * Deliberately NOT written here: `Outstanding` and payment `Status`
- * (Active/Delinquent/Past Due) from the source table. Neither is a field on
- * Account — Account.status is a service-activation flag ('active'/'inactive'),
- * not a delinquency flag (see models/Consumer.js's note on this), and the running
- * balance is `Billing`, a per-billing-period record this script has no
- * billingPeriod/dueDate data to construct. Writing them onto Account would
- * misuse a field and fabricate data that wasn't supplied. See the logged note
- * per account below.
+ * `outstanding` and `paymentStatus` from the source table are deliberately NOT
+ * written anywhere — neither field lives on Account (see utils/accountPaymentSummary.js:
+ * both are derived on read from real Billing records). This script has no
+ * billingPeriod/dueDate data to construct those Billing documents, so until some
+ * exist for these accounts, accountController will correctly report
+ * outstanding: 0 / paymentStatus: 'Active' for all ten. See the logged note per
+ * account below.
  *
  * DEVELOPMENT ONLY. Passwords are derived from the holders' own names and are
  * committed to this repository, which makes them public and guessable in equal
