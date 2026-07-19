@@ -24,7 +24,7 @@ accountSchema.statics.linkConsumer = function linkConsumer(accountNumber, consum
   return this.findOneAndUpdate(
     { accountNumber },
     { $addToSet: { consumerIds: consumerId } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 };
 
@@ -32,7 +32,7 @@ accountSchema.statics.unlinkConsumer = function unlinkConsumer(accountNumber, co
   return this.findOneAndUpdate(
     { accountNumber },
     { $pull: { consumerIds: consumerId } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 };
 

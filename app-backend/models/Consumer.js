@@ -23,6 +23,11 @@ const consumerSchema = new mongoose.Schema(
      */
     status: { type: String, enum: ['active', 'disabled'], default: 'active', required: true },
     accountNumbers: [{ type: String }], // linked account numbers, cap enforced in accountController
+    // Consumer-specific fields
+    address: { type: String, required: true },
+    type: { type: String, enum: ['residential', 'commercial', 'government'], required: true },
+    outstanding: { type: Number, default: 0, min: 0 },
+    paymentStatus: { type: String, enum: ['Active', 'Delinquent', 'Past Due'], default: 'Active' },
   },
   { timestamps: true }
 );

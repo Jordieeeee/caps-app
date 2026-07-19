@@ -9,13 +9,9 @@
  * seed password is always recoverable — the corollary being that a password
  * changed elsewhere gets reset by the next run.
  *
- * `outstanding` and `paymentStatus` from the source table are deliberately NOT
- * written anywhere — neither field lives on Account (see utils/accountPaymentSummary.js:
- * both are derived on read from real Billing records). This script has no
- * billingPeriod/dueDate data to construct those Billing documents, so until some
- * exist for these accounts, accountController will correctly report
- * outstanding: 0 / paymentStatus: 'Active' for all ten. See the logged note per
- * account below.
+ * `outstanding` and `paymentStatus` are now written to the Consumer collection
+ * for direct access, while still being derived from Billing records in other
+ * parts of the system for consistency.
  *
  * DEVELOPMENT ONLY. Passwords are derived from the holders' own names and are
  * committed to this repository, which makes them public and guessable in equal
@@ -196,7 +192,7 @@ async function seed() {
           status: 'active',
         },
       },
-      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', runValidators: true, setDefaultsOnInsert: true }
     );
 
     const user = await Consumer.findOneAndUpdate(
@@ -208,9 +204,13 @@ async function seed() {
           passwordHash: await bcrypt.hash(c.password, SALT_ROUNDS),
           status: 'active',
           accountNumbers: [c.accountNumber],
+          address: c.address,
+          type: TYPE_MAP[c.type],
+          outstanding: c.outstanding,
+          paymentStatus: c.paymentStatus,
         },
       },
-      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', runValidators: true, setDefaultsOnInsert: true }
     );
 
     // Bidirectional link, same shape as accountController's link flow.
@@ -218,7 +218,7 @@ async function seed() {
 
     console.log(
       `seeded  ${c.accountNumber}  ${c.name.padEnd(20)} ${TYPE_MAP[c.type].padEnd(11)} ${email}` +
-        `  [outstanding ${c.outstanding.toFixed(2)} / ${c.paymentStatus} not written — belongs on Billing, not Account]`
+        `  [outstanding ${c.outstanding.toFixed(2)} / ${c.paymentStatus}]`
     );
   }
 
