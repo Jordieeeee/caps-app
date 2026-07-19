@@ -10,10 +10,23 @@ import {
   type StoredSession,
 } from '@/shared/types/auth';
 
+/**
+ * No fallback URL on purpose. The previous default was `http://localhost:5000/api`,
+ * which is a trap on macOS: port 5000 is AirPlay Receiver, so a missing config
+ * produced connection noise from Control Center instead of an obvious
+ * misconfiguration. Failing loudly at startup is cheaper to diagnose than a login
+ * screen that reports "invalid email or password" because it never reached the API.
+ */
 const API_BASE_URL: string =
-  (Constants.expoConfig?.extra?.apiBaseUrl as string) ??
-  process.env.EXPO_PUBLIC_API_BASE_URL ??
-  'http://localhost:5000/api';
+  (Constants.expoConfig?.extra?.apiBaseUrl as string) ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+
+if (!API_BASE_URL) {
+  throw new Error(
+    'EXPO_PUBLIC_API_BASE_URL is not set. Add it to app-frontend/.env (e.g. ' +
+      'http://localhost:5001/api for the simulator, or http://<your-LAN-IP>:5001/api ' +
+      'for a physical device) and restart the Expo dev server.'
+  );
+}
 
 /** Refresh this far ahead of expiry so a request doesn't die mid-flight. */
 const REFRESH_SKEW_MS = 30_000;

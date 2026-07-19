@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Collector = require('../models/Collector');
 const Consumer = require('../models/Consumer');
+const AppCredential = require('../models/AppCredential');
 const RefreshToken = require('../models/RefreshToken');
 const httpError = require('../utils/httpError');
 const ErrorCodes = require('../utils/errorCodes');
@@ -10,10 +11,39 @@ const ErrorCodes = require('../utils/errorCodes');
  * every role-dispatch in this file (login, refresh, me). */
 const MODEL_BY_ROLE = { Collector, Consumer, Admin: User };
 
+/** The Admin Portal spells roles in lowercase; the mobile session (JWT claim,
+ * MODEL_BY_ROLE, REFRESH_TTL_MS) is keyed on the capitalised form. */
+const ROLE_FROM_CREDENTIAL = { collector: 'Collector', consumer: 'Consumer', admin: 'Admin' };
+function normaliseRole(role) {
+  return ROLE_FROM_CREDENTIAL[String(role).toLowerCase()] || role;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const ACCOUNT_DISABLED_MESSAGE =
   'This account has been deactivated. Please contact the Tanauan City Water District office.';
+
+const ACCOUNT_LOCKED_MESSAGE =
+  'This account is temporarily locked. Please try again later or contact the Tanauan City Water District office.';
+
+/**
+ * A portal credential is usable only if it is active and not currently locked.
+ *
+ * `mustChangePassword` / `tempPasswordExpiresAt` are deliberately NOT enforced
+ * here: the mobile app has no change-password flow yet, so enforcing the temp
+ * password would lock a freshly-created portal account out of mobile entirely,
+ * with no way to self-recover. The product decision is to let them in on the temp
+ * password for now. Follow-up: a forced change-password screen, at which point
+ * both flags should start gating here.
+ */
+function assertCredentialUsable(cred) {
+  if (cred.status !== 'active') {
+    throw httpError(403, ACCOUNT_DISABLED_MESSAGE, ErrorCodes.ACCOUNT_DISABLED);
+  }
+  if (cred.isLocked()) {
+    throw httpError(403, ACCOUNT_LOCKED_MESSAGE, ErrorCodes.ACCOUNT_DISABLED);
+  }
+}
 
 /**
  * Refresh lifetime is deliberately role-dependent.
@@ -88,21 +118,67 @@ exports.register = async (req, res) => {
   res.status(201).json(await issueSession(consumer));
 };
 
-exports.login = async (req, res) => {
-  const { email, password } = req.body;
-  // The client never says which role it's logging in as (single unified login
-  // form), so try each collection in turn until one has this email.
+/**
+ * Resolve an email + password to the profile document that should hold the session,
+ * or null if the credentials don't match anything.
+ *
+ * Two credential stores are consulted, in order:
+ *
+ *   1. `appcredentials` — the Admin Portal's login store, and the system of record
+ *      for every staff/consumer account created in the portal. The login email
+ *      lives here and often differs from the profile's own email, so this must be
+ *      tried first: the portal account is otherwise completely invisible to mobile.
+ *   2. The per-role profile collections' own `passwordHash` — how the mobile app's
+ *      own seed/registration path stores credentials. Kept as a fallback so seeded
+ *      dev logins and self-registered consumers (which have no `appcredentials`
+ *      row) still work.
+ *
+ * In both paths the password is verified before any account-status is revealed:
+ * reporting "disabled" to someone who hasn't proven they own the account would turn
+ * this endpoint into an account-existence oracle. A wrong password always returns
+ * null (→ 401); a correct password on an unusable account throws 403, because at
+ * that point ownership is already proven.
+ */
+async function authenticate(email, password) {
+  const cred = await AppCredential.findByEmail(email);
+  if (cred) {
+    if (!(await cred.comparePassword(password))) return null;
+    assertCredentialUsable(cred);
+    const role = normaliseRole(cred.role);
+    const Model = MODEL_BY_ROLE[role];
+    const profile = Model && (await Model.findById(cred.profileId));
+    if (!profile) {
+      // Correct password, but the credential points at a profile that no longer
+      // exists — a portal-side data problem, not a bad password. Don't mask it as
+      // one; ownership is already proven, so there is no oracle to protect.
+      throw httpError(
+        409,
+        'Your account is not fully set up yet. Please contact the Tanauan City Water District office.',
+        ErrorCodes.ACCOUNT_DISABLED
+      );
+    }
+    return profile;
+  }
+
+  // Legacy / seeded accounts that carry their own passwordHash. Same order the
+  // unified login form has always used.
   const user =
     (await Collector.findByEmail(email)) ||
     (await Consumer.findByEmail(email)) ||
     (await User.findByEmail(email));
+  if (!user || !(await user.comparePassword(password))) return null;
+  return user;
+}
 
-  // Verify the password before considering account status. Reporting
-  // ACCOUNT_DISABLED to someone who has not proven they own the account would
-  // turn this endpoint into an account-existence oracle.
-  if (!user || !(await user.comparePassword(password))) {
+exports.login = async (req, res) => {
+  const { email, password } = req.body;
+
+  const user = await authenticate(email, password);
+  if (!user) {
     throw httpError(401, 'Invalid email or password.', ErrorCodes.INVALID_CREDENTIALS);
   }
+  // Profile-level status gate. For a portal account this is in addition to the
+  // credential's own status, already checked in authenticate().
   assertActive(user);
 
   res.json(await issueSession(user));
@@ -157,6 +233,19 @@ exports.refresh = async (req, res) => {
   if (user.status !== 'active') {
     await RefreshToken.revokeAllForUser(user.id);
     throw httpError(403, ACCOUNT_DISABLED_MESSAGE, ErrorCodes.ACCOUNT_DISABLED);
+  }
+
+  // A portal account is also gated by its credential, which the portal can disable
+  // or lock without touching the profile doc — so re-check it here too. A disabled
+  // credential ends every session, exactly like a disabled profile; a temporary
+  // lock only blocks this one refresh and is not grounds to revoke other devices.
+  const cred = await AppCredential.findByProfile(user.id);
+  if (cred && cred.status !== 'active') {
+    await RefreshToken.revokeAllForUser(user.id);
+    throw httpError(403, ACCOUNT_DISABLED_MESSAGE, ErrorCodes.ACCOUNT_DISABLED);
+  }
+  if (cred && cred.isLocked()) {
+    throw httpError(403, ACCOUNT_LOCKED_MESSAGE, ErrorCodes.ACCOUNT_DISABLED);
   }
 
   const session = await issueSession(user);
