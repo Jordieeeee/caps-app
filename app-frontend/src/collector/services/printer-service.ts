@@ -1,5 +1,15 @@
 import { Platform } from 'react-native';
-import BlePlx from 'react-native-ble-plx';
+
+/**
+ * Types only — `import type` is erased at compile time and emits no `require`.
+ *
+ * This is load-bearing. `react-native-ble-plx` is a native module that Expo Go
+ * does not bundle and cannot load, so a *value* import here is evaluated the
+ * moment anything reaches this file and takes the whole app down at startup
+ * — not at the point someone tries to print. Keeping the types static and the
+ * module lazy is what lets the rest of the app run under Expo Go.
+ */
+import type { BleManager, Device, Subscription } from 'react-native-ble-plx';
 
 import {
   formatNoticeLines,
@@ -12,6 +22,51 @@ import {
 import { chunk, encodeReceipt, toBase64 } from './escpos';
 import { PrinterStore } from './printer-state';
 
+/**
+ * What a collector is told when the native BLE module is missing.
+ *
+ * Names the cause, because the alternative — "printer not found" — sends someone
+ * hunting for a hardware fault that does not exist. In Expo Go there is no radio to
+ * find, and no amount of switching the PT-210 off and on will change that.
+ */
+export const BLE_UNAVAILABLE_MESSAGE =
+  'Receipt printing needs a development build of the app. Expo Go cannot use Bluetooth, ' +
+  'so the printer is unavailable here — everything else works normally.';
+
+/** Resolved once; `undefined` means "not attempted yet", `null` means "unavailable". */
+let bleModule: typeof import('react-native-ble-plx') | null | undefined;
+
+/**
+ * Load the native module, or return null where it does not exist.
+ *
+ * `require` rather than `import` on purpose: it has to run at call time, inside a
+ * try, so a missing native module is a value we can branch on instead of a startup
+ * crash.
+ */
+function loadBle(): typeof import('react-native-ble-plx') | null {
+  if (bleModule !== undefined) return bleModule;
+  let loaded: typeof import('react-native-ble-plx') | null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    loaded = require('react-native-ble-plx');
+  } catch {
+    loaded = null;
+  }
+  bleModule = loaded;
+  return loaded;
+}
+
+/**
+ * Whether this build can print at all.
+ *
+ * Screens call this to disable print affordances up front. A print button that
+ * always fails is worse than no button: the collector taps it in front of a
+ * consumer who is waiting for a receipt.
+ */
+export function isPrintingSupported(): boolean {
+  return loadBle() !== null;
+}
+
 export interface PrintData {
   type: 'receipt' | 'report' | 'collection' | 'service_order';
   title: string;
@@ -20,9 +75,9 @@ export interface PrintData {
 }
 
 export class PrinterService {
-  private static bleManager: BlePlx.BleManager | null = null;
-  private static connectedDevice: BlePlx.Device | null = null;
-  private static disconnectSub: BlePlx.Subscription | null = null;
+  private static bleManager: BleManager | null = null;
+  private static connectedDevice: Device | null = null;
+  private static disconnectSub: Subscription | null = null;
   private static readonly PRINTER_SERVICE_UUID = '000018F0-0000-1000-8000-00805F9B34FB';
   private static readonly PRINTER_CHARACTERISTIC_UUID = '00002AF1-0000-1000-8000-00805F9B34FB';
 
@@ -45,25 +100,36 @@ export class PrinterService {
    */
   private static readonly WRITE_DELAY_MS = 20;
 
-  // Initialize BLE Manager
+  /**
+   * Initialize the BLE manager.
+   *
+   * Throws where the native module is absent (Expo Go) rather than leaving
+   * `bleManager` null for a later `this.bleManager!` to dereference — the old
+   * non-null assertions in scan/connect would have produced a bare
+   * "undefined is not an object", which tells the collector nothing.
+   */
   static initialize(): void {
-    if (!this.bleManager) {
-      this.bleManager = new BlePlx.BleManager();
-    }
+    if (this.bleManager) return;
+    const ble = loadBle();
+    if (!ble) throw new Error(BLE_UNAVAILABLE_MESSAGE);
+    // Named export under CommonJS interop; fall back to default for safety.
+    const Manager = ble.BleManager ?? (ble as { default?: { BleManager?: typeof BleManager } }).default?.BleManager;
+    if (!Manager) throw new Error(BLE_UNAVAILABLE_MESSAGE);
+    this.bleManager = new Manager();
   }
 
   // Get BLE Manager instance
-  static getBleManager(): BlePlx.BleManager | null {
+  static getBleManager(): BleManager | null {
     return this.bleManager;
   }
 
   // Scan for printers
-  static async scanForPrinters(durationSeconds: number = 10): Promise<BlePlx.Device[]> {
+  static async scanForPrinters(durationSeconds: number = 10): Promise<Device[]> {
     if (!this.bleManager) {
       this.initialize();
     }
 
-    const devices: BlePlx.Device[] = [];
+    const devices: Device[] = [];
     
     return new Promise((resolve, reject) => {
       this.bleManager!.startDeviceScan(

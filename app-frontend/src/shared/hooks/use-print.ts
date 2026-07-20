@@ -1,9 +1,11 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert } from 'react-native';
-import { State } from 'react-native-ble-plx';
-
-import { PrinterService } from '@/collector/services/printer-service';
+import {
+  BLE_UNAVAILABLE_MESSAGE,
+  PrinterService,
+  isPrintingSupported,
+} from '@/collector/services/printer-service';
 import { usePrinter } from '@/collector/services/printer-state';
 
 /**
@@ -45,10 +47,22 @@ export function usePrint() {
       async function attempt(): Promise<void> {
         setPrinting(true);
         try {
+          // No Bluetooth in this build at all (Expo Go). Checked before anything
+          // touches the manager, and worded so nobody goes looking for a hardware
+          // fault that does not exist.
+          if (!isPrintingSupported()) {
+            Alert.alert('Printing not available', BLE_UNAVAILABLE_MESSAGE, [{ text: 'OK' }]);
+            return;
+          }
+
           const manager = PrinterService.getBleManager();
           const bleState = manager ? await manager.state() : null;
 
-          if (bleState === State.PoweredOff) {
+          // Compared as a string literal rather than importing ble-plx's `State`
+          // enum: an enum is a runtime value, so importing it would re-introduce
+          // the static native require this file was just freed from. `State` is a
+          // string enum, so 'PoweredOff' is exactly the value it produces.
+          if (bleState === 'PoweredOff') {
             Alert.alert(
               'Bluetooth is off',
               'Turn on Bluetooth in your phone settings, then try printing again.\n\nThe record is saved on this phone either way.',
@@ -98,10 +112,14 @@ export function usePrint() {
     print,
     printing,
     /** False when a Print button should be disabled. */
-    canPrint: printer.status === 'connected',
+    canPrint: isPrintingSupported() && printer.status === 'connected',
     /** Short inline reason a Print button is disabled. Null when it isn't. */
-    printBlockedReason:
-      printer.status === 'connected'
+    printBlockedReason: !isPrintingSupported()
+      ? // Nothing the collector can do on this device, so it does not read as an
+        // instruction — "Connect printer to print" would send them to a settings
+        // screen that cannot help.
+        'Printing needs a development build'
+      : printer.status === 'connected'
         ? null
         : printer.status === 'connecting'
           ? 'Connecting to printer…'

@@ -19,6 +19,7 @@ import { ScreenHeader } from '@/shared/components/screen-header';
 import { NoticeBadge, noticeTone, useToneColor } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
 import { formatPeso } from '@/shared/format/currency';
+import { formatBillingPeriod, formatDate } from '@/shared/format/date';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { Radius, Spacing } from '@/shared/theme/twd';
@@ -185,7 +186,9 @@ function BillSummaryCard({ bills }: { bills: Bill[] }) {
       </ThemedText>
 
       <ThemedText type="small" themeColor="textSecondary">
-        {next.billingPeriod} · {next.accountNumber} · due {next.dueDate}
+        {/* No account number: real bills carry no account reference (see
+            consumer/types.ts). The mock had one, which is why it rendered here. */}
+        {formatBillingPeriod(next.billingPeriod)} · due {formatDate(next.dueDate)}
       </ThemedText>
 
       {urgency === 'overdue' && (

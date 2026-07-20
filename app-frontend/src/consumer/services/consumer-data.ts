@@ -1,68 +1,56 @@
-import {
-  mockAccounts,
-  mockBills,
-  mockNotices,
-  type Account,
-  type Bill,
-  type Notice,
-} from '@/consumer/data/mock-data';
 import { apiFetch } from '@/shared/services/api-client';
+import type { Account, Bill, Notice } from '@/consumer/types';
 
 /**
- * The consumer module's read layer.
+ * The consumer module's read layer — real I/O against the TWD backend.
  *
- * Every function here is async and every screen treats it as fallible, so the
- * loading and error paths are real code rather than components nobody renders.
- * The bodies currently resolve mock data — see mock-data.ts for why — but the
- * signatures are already the shapes the API returns, so each swap is one line:
+ * These bodies used to resolve fixtures from `data/mock-data.ts`. The endpoints
+ * existed the whole time; they were pointed at collections nothing writes
+ * (`billings`, `announcements`) while the Admin Portal published into `bills` and
+ * `cmscontents`. Repointing the models is what made these calls return data, so
+ * the mock is deleted rather than kept as a fallback — a silent fallback to
+ * fixtures is how a consumer ends up reading someone else's plausible balance
+ * during an outage.
  *
- *   listAccounts  → apiFetch<{ accounts: Account[] }>('/accounts')
- *   listBills     → apiFetch<{ bills: Bill[] }>(`/billing/${accountNumber}`)
- *   listNotices   → apiFetch<{ announcements: Notice[] }>('/announcements')
- *   linkAccount   → apiFetch('/accounts/link', { method: 'POST', body: … })
- *   unlinkAccount → apiFetch(`/accounts/${accountNumber}`, { method: 'DELETE' })
- *
- * `apiFetch` (shared/services/api-client) already attaches the bearer token and
- * refreshes it, and all five routes above exist and are Consumer-role-gated.
- *
- * ⚠️ Honest limitation while the bodies are mock: the error path cannot fire,
- * because nothing here rejects. The screens are wired for it; the state is
- * unreachable until these bodies do real I/O.
- *
- * Deliberately NOT here: a `payBill`. There is no payment route in the backend —
- * `Billing.paymentDate`/`paymentMethod` are written by an Admin creating the bill
- * or by a collector syncing field cash, and nothing accepts a consumer-initiated
- * payment. Adding a stub here would be the first step toward a UI that claims the
- * water district takes payments through this app. See app/consumer/bills/how-to-pay.
+ * Every call is scoped server-side to the caller's token. There is deliberately no
+ * accountNumber parameter anywhere here: the previous `GET /billing/:accountNumber`
+ * let any logged-in consumer read any household's billing history.
  */
 
 export async function listAccounts(): Promise<Account[]> {
-  return mockAccounts;
+  const { accounts } = await apiFetch<{ accounts: Account[] }>('/accounts');
+  return accounts;
 }
 
 export async function listBills(): Promise<Bill[]> {
-  return mockBills;
+  const { bills } = await apiFetch<{ bills: Bill[] }>('/billing');
+  return bills;
 }
 
 export async function listNotices(): Promise<Notice[]> {
-  return mockNotices;
+  const { announcements } = await apiFetch<{ announcements: Notice[] }>('/announcements');
+  return announcements;
 }
 
 export async function unlinkAccount(accountNumber: string): Promise<void> {
-  // Real: DELETE /accounts/:accountNumber → { account }
-  void accountNumber;
+  await apiFetch(`/accounts/${encodeURIComponent(accountNumber)}`, { method: 'DELETE' });
 }
+
+/**
+ * Deliberately absent: `linkAccount`.
+ *
+ * The server now refuses self-service linking (403) because the old endpoint
+ * attached any account number the caller sent, with no ownership check — a full
+ * customer-base enumeration over sequential account numbers. Linking happens at the
+ * TWD office until the district picks a verification workflow. A client function
+ * here would only produce a button that always fails.
+ * See app-backend/controllers/accountController.js.
+ */
 
 export type FeedbackType = 'billing' | 'service-quality' | 'system-issue' | 'other';
 
 /**
- * The one call here that is real, because it is the one that can be.
- *
- * POST /feedback exists, is Consumer-gated, and requires exactly these three
- * fields. It is also user-initiated rather than a page load, so a failure surfaces
- * as "couldn't send, try again" against an action the consumer just took — which
- * is the correct thing for it to do, and makes the error path genuinely reachable
- * rather than decorative.
+ * POST /feedback — Consumer-gated, requires exactly these three fields.
  *
  * ⚠️ The old form also collected an "Account Number (Optional)" and dropped it:
  * the Feedback schema stores consumerId/type/subject/message/status and has no

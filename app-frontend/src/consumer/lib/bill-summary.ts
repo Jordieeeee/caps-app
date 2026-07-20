@@ -1,4 +1,4 @@
-import type { Bill } from '@/consumer/data/mock-data';
+import type { Bill } from '@/consumer/types';
 
 /**
  * What a consumer opens the app to find out.
@@ -20,11 +20,26 @@ export interface BillSummary {
   urgency: Urgency;
 }
 
-/** Whole days from today to `date`; negative once it is in the past. */
+/**
+ * Whole days from today to `date`; negative once it is in the past.
+ *
+ * Compared in UTC on both sides. This used to build the due date as
+ * `new Date(\`${date}T00:00:00\`)`, which assumed the bare `YYYY-MM-DD` the mock
+ * produced — against the server's real ISO timestamps that concatenation yields
+ * `2026-07-31T00:00:00.000ZT00:00:00`, an Invalid Date, and every comparison
+ * downstream silently becomes NaN. NaN loses every `<`/`<=` test, so a genuinely
+ * overdue bill would quietly present as 'scheduled'.
+ *
+ * ⚠️ Client-side and therefore advisory only. The device clock is user-settable, so
+ * the authoritative count is `bill.daysOverdue` from the server. This exists for
+ * ordering and for the "due in N days" copy on bills that are not yet late.
+ */
 export function daysUntil(date: string, now: Date = new Date()): number {
-  const due = new Date(`${date}T00:00:00`);
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return Math.round((due.getTime() - today.getTime()) / 86_400_000);
+  const due = new Date(date);
+  if (Number.isNaN(due.getTime())) return 0;
+  const dueDay = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.round((dueDay - today) / 86_400_000);
 }
 
 /**
@@ -49,9 +64,11 @@ export function summarise(bills: Bill[], now: Date = new Date()): BillSummary {
 
   const urgency: Urgency = !next
     ? 'clear'
-    : // Trust the server's `overdue` status, but do not depend on it: a bill can
-      // sit at `pending` past its due date if nothing has re-run the status job.
-      next.status === 'overdue' || (days !== null && days < 0)
+    : // The server recomputes `status` and `daysOverdue` against server time on every
+      // read, so `overdue` here is authoritative rather than a stale batch-job flag.
+      // The local day count stays in the test as a backstop for an older server that
+      // does not yet send daysOverdue.
+      next.status === 'overdue' || next.daysOverdue > 0 || (days !== null && days < 0)
       ? 'overdue'
       : days !== null && days <= DUE_SOON_DAYS
         ? 'due-soon'

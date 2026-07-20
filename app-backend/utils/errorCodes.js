@@ -16,6 +16,8 @@ const ErrorCodes = {
   TOKEN_EXPIRED: 'TOKEN_EXPIRED',
   /** Authenticated, but this role may not use this endpoint. */
   ROLE_NOT_PERMITTED: 'ROLE_NOT_PERMITTED',
+  /** The route exists but the operation belongs to another system (e.g. the Admin Portal). */
+  NOT_SUPPORTED: 'NOT_SUPPORTED',
 };
 
 module.exports = ErrorCodes;

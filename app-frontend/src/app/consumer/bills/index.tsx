@@ -14,6 +14,7 @@ import { ScreenHeader } from '@/shared/components/screen-header';
 import { PaymentBadge } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
 import { formatPeso } from '@/shared/format/currency';
+import { formatBillingPeriod, formatDate } from '@/shared/format/date';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { Radius, Spacing } from '@/shared/theme/twd';
@@ -191,10 +192,12 @@ function BillCard({ bill }: { bill: Bill }) {
       <View style={styles.cardHeader}>
         <View style={styles.cardHeaderText}>
           <ThemedText type="defaultBold" style={styles.cardTitle}>
-            {bill.billingPeriod}
+            {formatBillingPeriod(bill.billingPeriod)}
           </ThemedText>
+          {/* Was the account number, which real bills do not carry. The due date is
+              what a consumer needs from a list row anyway. */}
           <ThemedText type="small" themeColor="textSecondary">
-            {bill.accountNumber}
+            Due {formatDate(bill.dueDate)}
           </ThemedText>
         </View>
         <PaymentBadge status={bill.status} />

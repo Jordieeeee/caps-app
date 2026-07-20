@@ -4,15 +4,8 @@ import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MAX_ACCOUNTS } from '@/consumer/data/mock-data';
-import { summarise } from '@/consumer/lib/bill-summary';
-import {
-  listAccounts,
-  listBills,
-  unlinkAccount,
-  type Account,
-  type Bill,
-} from '@/consumer/services/consumer-data';
+import { MAX_ACCOUNTS } from '@/consumer/types';
+import { listAccounts, unlinkAccount, type Account } from '@/consumer/services/consumer-data';
 import { useAuth, useSession } from '@/shared/auth/auth-context';
 import { Icon, type IconName } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
@@ -34,11 +27,11 @@ import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
  * did not deserve a tab of its own.
  */
 export default function ConsumerAccountScreen() {
-  const load = useCallback(
-    async () =>
-      Promise.all([listAccounts(), listBills()]).then(([accounts, bills]) => ({ accounts, bills })),
-    []
-  );
+  // Bills are no longer fetched here. This screen used to pull the full bill list
+  // purely to filter it per account for the balance row; the server now sends
+  // `outstanding` on each account, so that request was a round trip whose result
+  // could not be used against real data anyway.
+  const load = useCallback(async () => ({ accounts: await listAccounts() }), []);
   const { state, reload } = useAsync(load);
 
   return (
@@ -62,21 +55,13 @@ export default function ConsumerAccountScreen() {
       )}
 
       {state.status === 'ready' && (
-        <AccountBody accounts={state.data.accounts} bills={state.data.bills} onChanged={reload} />
+        <AccountBody accounts={state.data.accounts} onChanged={reload} />
       )}
     </ScreenContainer>
   );
 }
 
-function AccountBody({
-  accounts,
-  bills,
-  onChanged,
-}: {
-  accounts: Account[];
-  bills: Bill[];
-  onChanged: () => void;
-}) {
+function AccountBody({ accounts, onChanged }: { accounts: Account[]; onChanged: () => void }) {
   const theme = useTwdTheme();
   const canAdd = accounts.length < MAX_ACCOUNTS;
 
@@ -106,12 +91,7 @@ function AccountBody({
             </View>
 
             {accounts.map((account) => (
-              <AccountCard
-                key={account.id}
-                account={account}
-                bills={bills}
-                onUnlinked={onChanged}
-              />
+              <AccountCard key={account.id} account={account} onUnlinked={onChanged} />
             ))}
 
             {canAdd ? (
@@ -154,22 +134,34 @@ function AccountBody({
  * has. What it did not show was the balance. A consumer looking at their accounts
  * wants to know which one owes money; that took a trip to another tab.
  */
-function AccountCard({
-  account,
-  bills,
-  onUnlinked,
-}: {
-  account: Account;
-  bills: Bill[];
-  onUnlinked: () => void;
-}) {
+function AccountCard({ account, onUnlinked }: { account: Account; onUnlinked: () => void }) {
   const theme = useTwdTheme();
   const [busy, setBusy] = useState(false);
 
-  const mine = bills.filter((b) => b.accountNumber === account.accountNumber);
-  const { totalDue, urgency } = summarise(mine);
-  const dueColor =
-    urgency === 'overdue' ? theme.danger : totalDue > 0 ? theme.warning : theme.success;
+  /**
+   * The balance comes from the server, not from filtering bills by account.
+   *
+   * That filter (`bills.filter(b => b.accountNumber === account.accountNumber)`)
+   * worked only against the mock, where every bill carried an account number. Real
+   * bills issued by the portal reference a *consumer* and no account at all, so the
+   * filter matched nothing and every card would have read "Paid up" — including for
+   * a household deep in arrears, which is the worst possible direction for this
+   * particular error.
+   *
+   * `outstanding` is null when the district's data cannot attribute a balance to
+   * this account alone (a meter shared by several consumers). Null is rendered as a
+   * pointer to the total, never as ₱0.00.
+   */
+  const { outstanding, paymentStatus } = account;
+  const known = outstanding !== null;
+  const owes = known && outstanding > 0;
+  const dueColor = !known
+    ? theme.textSecondary
+    : paymentStatus === 'Past Due'
+      ? theme.danger
+      : owes
+        ? theme.warning
+        : theme.success;
 
   /**
    * Unlink asks first, and says what is lost.
@@ -181,14 +173,22 @@ function AccountCard({
    * misunderstanding a confirmation has to head off.
    */
   const confirmUnlink = () => {
-    const owes = totalDue > 0;
+    // An unknown balance warns too. Staying silent would imply "nothing owed" on
+    // exactly the accounts we cannot vouch for.
+    const balanceWarning = owes
+      ? `This account still owes ${formatPeso(outstanding)}. Unlinking does not cancel the bill — it stays due, you just won't see it here.\n\n`
+      : !known
+        ? "This account may still have a balance. Unlinking does not cancel any bill — it stays due, you just won't see it here.\n\n"
+        : '';
+
     Alert.alert(
       `Unlink ${account.accountNumber}?`,
-      `${
-        owes
-          ? `This account still owes ${formatPeso(totalDue)}. Unlinking does not cancel the bill — it stays due, you just won't see it here.\n\n`
-          : ''
-      }You'll lose access to this account's billing history in the app. You can link it again with the account number from your bill.`,
+      // Relinking is no longer self-service: the server refuses it (403) until the
+      // district defines a verification workflow. Promising "you can link it again
+      // with the account number from your bill" would be a lie that costs the
+      // consumer a trip to the office to undo.
+      `${balanceWarning}You'll lose access to this account's billing history in the app. ` +
+        'Re-linking has to be done at the TWD office with a valid ID.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -235,10 +235,10 @@ function AccountCard({
 
       <View style={[styles.balanceRow, { borderTopColor: theme.border }]}>
         <ThemedText type="small" themeColor="textSecondary">
-          {totalDue > 0 ? 'Outstanding' : 'Balance'}
+          {owes ? 'Outstanding' : 'Balance'}
         </ThemedText>
         <ThemedText type="defaultBold" style={{ color: dueColor }}>
-          {totalDue > 0 ? formatPeso(totalDue) : 'Paid up'}
+          {!known ? 'See total balance' : owes ? formatPeso(outstanding) : 'Paid up'}
         </ThemedText>
       </View>
 
