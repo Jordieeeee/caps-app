@@ -51,6 +51,24 @@ export interface PeriodInvoice {
   synced: boolean;
 }
 
+export interface BillingReport {
+  periods: BillingPeriod[];
+  /**
+   * Readings on this phone that no account on the route accounts for.
+   *
+   * Reported rather than silently dropped. These are real saved records — mostly
+   * readings taken against the twelve-row fixture route this app shipped with
+   * (WD-12345 and friends), which the district has never had — and a report that
+   * quietly discards a collector's saved work is the same class of dishonesty as
+   * one that invents it. Stating the count lets someone see that the handset is
+   * carrying junk; it also means a genuinely mis-keyed account number cannot
+   * disappear without trace.
+   */
+  unmatched: number;
+  /** False when this phone has never downloaded a route, so nothing can be matched. */
+  routeLoaded: boolean;
+}
+
 export interface BillingPeriod {
   /** `2026-08`. Sorts lexically, which is also chronologically. */
   id: string;
@@ -110,11 +128,11 @@ function recentMonthKeys(now: Date): string[] {
  * has not kept yet. Older months outside the window still appear when they hold
  * readings — a record that exists is never hidden by the size of the window.
  */
-export async function loadBillingPeriods(now: Date = new Date()): Promise<BillingPeriod[]> {
+export async function loadBillingPeriods(now: Date = new Date()): Promise<BillingReport> {
   const [readings, accounts] = await Promise.all([
     OfflineStorage.getMeterReadings(),
-    // Cache only. Names and addresses decorate the invoice; their absence must not
-    // stop the report from rendering, and the network is not available anyway.
+    // Cache only — the route as the Route screen holds it. This is read, never
+    // written: the route is that screen's data and this one only borrows it.
     RouteAccountService.getCached(),
   ]);
 
@@ -125,21 +143,41 @@ export async function loadBillingPeriods(now: Date = new Date()): Promise<Billin
   // Seeded with the whole window so every month has a chip; readings then fill
   // them in, and any month older than the window is added by the loop below.
   const byMonth = new Map<string, PeriodInvoice[]>(months.map((m) => [m, []]));
+  let unmatched = 0;
 
   for (const reading of readings) {
+    const account = accountFor.get(reading.accountNumber);
+
+    /**
+     * An invoice requires an account the district actually has.
+     *
+     * This used to fall through with `consumerName: reading.accountNumber` and a
+     * blank address, which is how the Reports screen kept showing rows for
+     * WD-12345 and the rest of the retired fixture route: readings recorded on
+     * this handset against twelve invented households, still in the outbox, still
+     * being totalled into "Total Billed" as though the district were owed money
+     * for them. A bill needs a consumer to send it to, and these have none.
+     *
+     * Note the direction of the dependency: the route is the authority and this
+     * screen is the borrower. Nothing here alters, filters or writes back to the
+     * route cache — an account that leaves the route does not lose its reading,
+     * it only stops appearing on a billing report it can no longer belong to.
+     */
+    if (!account) {
+      unmatched++;
+      continue;
+    }
+
     const month = monthKeyOf(reading.readingDate);
     const invoices = byMonth.get(month) ?? [];
-    const account = accountFor.get(reading.accountNumber);
 
     invoices.push({
       id: reading.id,
       invoiceNo: invoiceNumberFor(reading.accountNumber, reading.readingDate),
       accountNumber: reading.accountNumber,
-      // Falls back to the account number rather than "Unknown": a reading can
-      // outlive its route cache, and the number is what the office looks the
-      // household up by.
-      consumerName: account?.consumerName ?? reading.accountNumber,
-      address: account?.address ?? '',
+      // Real, both of them — the row exists only because the account does.
+      consumerName: account.consumerName,
+      address: account.address,
       readingDate: reading.readingDate,
       dueDate: dueDateFor(reading.readingDate),
       // The same calculation that printed the consumer's copy at the meter. Not a
@@ -155,7 +193,7 @@ export async function loadBillingPeriods(now: Date = new Date()): Promise<Billin
     byMonth.set(month, invoices);
   }
 
-  return [...byMonth.entries()]
+  const periods = [...byMonth.entries()]
     .map(([month, invoices]) => {
       // Newest reading first within a period — the collector is checking recent
       // work far more often than they are auditing the start of the month.
@@ -174,4 +212,6 @@ export async function loadBillingPeriods(now: Date = new Date()): Promise<Billin
       };
     })
     .sort((a, b) => b.id.localeCompare(a.id));
+
+  return { periods, unmatched, routeLoaded: accounts.length > 0 };
 }

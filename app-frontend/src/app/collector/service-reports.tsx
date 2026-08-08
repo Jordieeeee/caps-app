@@ -1,5 +1,5 @@
 import { useFocusEffect } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
@@ -64,10 +64,8 @@ export default function ServiceReportsScreen() {
     }, [refresh]),
   );
 
-  const periods = useMemo(
-    () => (state.status === "ready" ? state.data : []),
-    [state],
-  );
+  const report = state.status === "ready" ? state.data : null;
+  const periods = useMemo(() => report?.periods ?? [], [report]);
 
   /**
    * The current month is the default, and stays the default across a re-read.
@@ -145,6 +143,31 @@ export default function ServiceReportsScreen() {
             body="The readings saved on this phone could not be read. They have not been lost — try again."
             onRetry={reload}
           />
+        </ScreenSection>
+      )}
+
+      {/* Two different reasons a figure below might not be the whole story, and
+          they need different answers from the collector — one is "go get signal",
+          the other is "this handset is carrying records the district cannot place".
+          Neither is left to be inferred from a total that looks low. */}
+      {report && !report.routeLoaded && (
+        <ScreenSection>
+          <Note tone="warning">
+            Your route has not downloaded to this phone yet, so no invoices can be
+            matched to an account. Open Route with a connection and pull down to
+            download it.
+          </Note>
+        </ScreenSection>
+      )}
+
+      {report && report.routeLoaded && report.unmatched > 0 && (
+        <ScreenSection>
+          <Note tone="muted">
+            {report.unmatched === 1
+              ? "1 reading on this phone is for an account that is not on your route, so it is not billed here."
+              : `${report.unmatched} readings on this phone are for accounts that are not on your route, so they are not billed here.`}{" "}
+            Tell the office if you think that is wrong.
+          </Note>
         </ScreenSection>
       )}
 
@@ -297,21 +320,51 @@ export default function ServiceReportsScreen() {
 }
 
 function PendingNote({ count }: { count: number }) {
+  return (
+    <Note tone="warning">
+      {count === 1
+        ? "1 invoice in this period has not reached TWD yet. These totals describe this phone, not the office record."
+        : `${count} invoices in this period have not reached TWD yet. These totals describe this phone, not the office record.`}
+    </Note>
+  );
+}
+
+/**
+ * A qualifier on the numbers above it.
+ *
+ * `warning` for something the collector should act on; `muted` for something they
+ * only need to know. The distinction matters because this screen can show two
+ * notes at once, and a screen where every caveat shouts teaches people to read
+ * none of them.
+ */
+function Note({
+  tone,
+  children,
+}: {
+  tone: "warning" | "muted";
+  children: ReactNode;
+}) {
   const theme = useTwdTheme();
+  const warning = tone === "warning";
 
   return (
     <View
       style={[
-        styles.pendingNote,
-        { borderColor: theme.warning, backgroundColor: theme.warningSurface },
+        styles.note,
+        {
+          borderColor: warning ? theme.warning : theme.border,
+          backgroundColor: warning ? theme.warningSurface : "transparent",
+        },
       ]}
       accessible
       accessibilityRole="summary"
     >
-      <ThemedText type="small" style={{ color: theme.warning }}>
-        {count === 1
-          ? "1 invoice in this period has not reached TWD yet. These totals describe this phone, not the office record."
-          : `${count} invoices in this period have not reached TWD yet. These totals describe this phone, not the office record.`}
+      <ThemedText
+        type="small"
+        style={warning ? { color: theme.warning } : undefined}
+        themeColor={warning ? undefined : "textSecondary"}
+      >
+        {children}
       </ThemedText>
     </View>
   );
@@ -471,7 +524,7 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     fontWeight: "700",
   },
-  pendingNote: {
+  note: {
     padding: Spacing.three,
     borderRadius: Radius.card,
     borderWidth: 2,
