@@ -1,20 +1,27 @@
+import { localDateKey } from '@/shared/format/date';
 import { OfflineStorage } from './offline-storage';
+import { RouteAccountService } from './route-accounts';
 import { SyncService, type SyncStatus } from './sync-service';
 
 export interface TodaySummary {
+  /** Readings recorded today. Records, not accounts — a re-read writes a second one. */
   readingsToday: number;
-  collectionsToday: number;
-  collectedToday: number;
+  /** Distinct accounts read today, which is what "progress along the route" means. */
+  accountsRead: number;
+  /** Accounts on the cached route. 0 when this phone has never downloaded one. */
+  routeTotal: number;
   sync: SyncStatus;
 }
 
-/** Local calendar day, matching the `YYYY-MM-DD` the records are stamped with. */
-function todayKey(now: Date = new Date()): string {
-  const y = now.getFullYear();
-  const m = `${now.getMonth() + 1}`.padStart(2, '0');
-  const d = `${now.getDate()}`.padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
+/**
+ * Local calendar day, matching the `YYYY-MM-DD` the records are stamped with.
+ *
+ * This file always had it right and was the only one that did — the stamping side
+ * used `toISOString()`, so the two disagreed for the first eight hours of every
+ * Manila day. Both ends now share one helper, which is the only way the pair can
+ * be kept honest. See localDateKey.
+ */
+const todayKey = localDateKey;
 
 /**
  * What this collector has done today, and where it stands with TWD.
@@ -22,31 +29,37 @@ function todayKey(now: Date = new Date()): string {
  * Every number here is read from this phone's own storage, which is the only
  * source that is true offline — and offline is the normal case, not the edge.
  *
- * Deliberately absent: "12 of 150". A progress bar needs a denominator, and the
- * denominator is the account roster for the collector's assigned routes, which
- * this app has never fetched or cached. `session.user.routeIds` gives the route
- * *ids* and nothing else; the only `totalAccounts` in the codebase lives in a mock
- * array inside reading-reports.tsx. Rendering "12 of 150" from that would put an
- * invented denominator in the most authoritative position on the dashboard, and it
- * would read as authoritative in exactly the demo where someone decides the number
- * is real. Counts are honest today; the ratio needs the roster cached at login
- * first, at which point this function grows a `routeTotal` and Home grows a bar.
+ * "12 of 150" is now possible and is here. It was deliberately absent while the
+ * denominator did not exist: the roster lived in a twelve-row mock and rendering a
+ * ratio against it would have put an invented number in the most authoritative
+ * position on the dashboard. GET /accounts/route now caches the real roster on the
+ * handset, so the denominator is TWD's, and `routeTotal` is 0 — rendered as "not
+ * downloaded", never as a ratio — when the phone has never had one.
+ *
+ * Deliberately absent, permanently: money. This used to report `collectedToday`
+ * and a count of payments, from a store nothing ever wrote, so Home showed a
+ * collector "₱0.00 collected · 0 payments" every day of their working life. TWD's
+ * collectors read meters; a consumer pays at the office. See offline-storage.ts.
  */
 export async function loadToday(now: Date = new Date()): Promise<TodaySummary> {
   const key = todayKey(now);
 
-  const [readings, collections, sync] = await Promise.all([
+  const [readings, route, sync] = await Promise.all([
     OfflineStorage.getMeterReadings(),
-    OfflineStorage.getCollections(),
+    // Cache only — no network. This runs on every Home focus, and Home must render
+    // the same numbers in a barangay with no signal as it does at the depot.
+    RouteAccountService.getCached(),
     SyncService.getSyncStatus(),
   ]);
 
-  const todayCollections = collections.filter((c) => c.collectionDate === key);
+  const todayReadings = readings.filter((r) => r.readingDate === key);
 
   return {
-    readingsToday: readings.filter((r) => r.readingDate === key).length,
-    collectionsToday: todayCollections.length,
-    collectedToday: todayCollections.reduce((sum, c) => sum + c.amount, 0),
+    readingsToday: todayReadings.length,
+    // Distinct accounts: re-reading a meter to correct it writes a second record,
+    // and it would be wrong to tell someone they have read 15 of 12 accounts.
+    accountsRead: new Set(todayReadings.map((r) => r.accountNumber)).size,
+    routeTotal: route.length,
     sync,
   };
 }
@@ -74,10 +87,7 @@ export type SyncClaim =
   | { kind: 'never' };
 
 export function syncClaim(status: SyncStatus): SyncClaim {
-  const count =
-    status.unsyncedCounts.meterReadings +
-    status.unsyncedCounts.collections +
-    status.unsyncedCounts.serviceOrders;
+  const count = status.unsyncedCounts.meterReadings + status.unsyncedCounts.serviceOrders;
 
   if (count > 0) return { kind: 'pending', count, lastSync: status.lastSync };
   if (status.lastSync === 0) return { kind: 'never' };

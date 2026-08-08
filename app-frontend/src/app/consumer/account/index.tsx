@@ -19,6 +19,7 @@ import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-stat
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { AccountStatusBadge } from '@/shared/components/status-badge';
+import { ThemeToggle } from '@/shared/components/theme-toggle';
 import { TwdButton } from '@/shared/components/twd-button';
 import { formatPeso } from '@/shared/format/currency';
 import { useAsync } from '@/shared/hooks/use-async';
@@ -458,38 +459,49 @@ function SettingsSection() {
   // both, sourced from the district's registry rather than from the cached
   // session, and two copies of a name is how they end up disagreeing after an edit.
   return (
-    <ScreenSection gap={Spacing.three}>
-      <NavRow
-        icon="message-square"
-        label="Send feedback"
-        detail="Report an issue"
-        onPress={() => router.push('/consumer/account/feedback')}
-      />
+    <>
+      <ScreenSection gap={Spacing.two}>
+        <ThemedText type="defaultBold">Appearance</ThemedText>
+        <ThemeToggle />
+        <ThemedText type="small" themeColor="textSecondary">
+          Choose how the app looks on this phone, or let it follow your phone&apos;s own
+          setting.
+        </ThemedText>
+      </ScreenSection>
 
-      {/* Sits directly under Send feedback, in that order, because the pair reads
-          as one thing a consumer does and then checks on. Kept as its own row
-          rather than a tab inside the form: the form is a task with a keyboard and
-          an unsaved draft, and putting a navigation control inside it invites
-          someone to lose a half-typed message by tapping across. */}
-      <NavRow
-        icon="inbox"
-        label="Your feedback"
-        detail="See what you've sent and its status"
-        onPress={() => router.push('/consumer/account/feedback-history')}
-      />
+      <ScreenSection gap={Spacing.three}>
+        <NavRow
+          icon="message-square"
+          label="Send feedback"
+          detail="Report an issue"
+          onPress={() => router.push('/consumer/account/feedback')}
+        />
 
-      <TwdButton
-        label="Sign out"
-        icon="log-out"
-        variant="danger"
-        onPress={confirmSignOut}
-        accessibilityHint="Asks you to confirm before ending your session"
-      />
+        {/* Sits directly under Send feedback, in that order, because the pair reads
+            as one thing a consumer does and then checks on. Kept as its own row
+            rather than a tab inside the form: the form is a task with a keyboard and
+            an unsaved draft, and putting a navigation control inside it invites
+            someone to lose a half-typed message by tapping across. */}
+        <NavRow
+          icon="inbox"
+          label="Your feedback"
+          detail="See what you've sent and its status"
+          onPress={() => router.push('/consumer/account/feedback-history')}
+        />
 
-      <ThemedText type="small" themeColor="textSecondary" style={styles.footer}>
-        Tanauan City Water District
-      </ThemedText>
-    </ScreenSection>
+        <TwdButton
+          label="Sign out"
+          icon="log-out"
+          variant="danger"
+          onPress={confirmSignOut}
+          accessibilityHint="Asks you to confirm before ending your session"
+        />
+
+        <ThemedText type="small" themeColor="textSecondary" style={styles.footer}>
+          Tanauan City Water District
+        </ThemedText>
+      </ScreenSection>
+    </>
   );
 }
 

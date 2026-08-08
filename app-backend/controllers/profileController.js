@@ -2,6 +2,7 @@ const Consumer = require('../models/Consumer');
 const AppCredential = require('../models/AppCredential');
 const httpError = require('../utils/httpError');
 const { displayName, primaryContact } = require('../utils/consumerIdentity');
+const { normaliseMobile, INVALID_MOBILE_MESSAGE } = require('../utils/phone');
 
 /**
  * The consumer's own registry record — read here, editable only in part.
@@ -26,25 +27,6 @@ const { displayName, primaryContact } = require('../utils/consumerIdentity');
 
 /** Portal `contacts` entries this backend will treat as the editable phone slot. */
 const MOBILE = 'mobile';
-
-/**
- * Philippine mobile numbers, normalised to the 09XXXXXXXXX form already in the
- * registry.
- *
- * Accepts the +63 form too, because that is what a phone's own contact card
- * produces and rejecting it would look like the app disliking the user's real
- * number. Spaces, dashes and parentheses are stripped before matching rather than
- * rejected — a consumer typing `0912 345 6789` has not made a mistake.
- */
-function normaliseMobile(raw) {
-  const digits = String(raw).replace(/[\s()-]/g, '');
-
-  if (/^09\d{9}$/.test(digits)) return digits;
-  if (/^\+639\d{9}$/.test(digits)) return `0${digits.slice(3)}`;
-  if (/^639\d{9}$/.test(digits)) return `0${digits.slice(2)}`;
-
-  return null;
-}
 
 /** Address parts that must be present for the district to actually deliver a bill. */
 const REQUIRED_ADDRESS_PARTS = ['houseStreet', 'barangay', 'city', 'province'];
@@ -126,12 +108,7 @@ exports.update = async (req, res) => {
 
   if (contactNumber !== undefined) {
     const normalised = normaliseMobile(contactNumber);
-    if (!normalised) {
-      throw httpError(
-        400,
-        'Enter a valid Philippine mobile number, for example 09171234567.'
-      );
-    }
+    if (!normalised) throw httpError(400, INVALID_MOBILE_MESSAGE);
 
     const contacts = (consumer.contacts || []).map((c) => ({
       contactType: c.contactType,

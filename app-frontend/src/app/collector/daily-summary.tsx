@@ -16,6 +16,7 @@ import { SkeletonList } from '@/shared/components/skeleton';
 import { SyncBadge } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
 import { formatPeso } from '@/shared/format/currency';
+import { localDateKey } from '@/shared/format/date';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useDownload } from '@/shared/hooks/use-download';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
@@ -87,7 +88,10 @@ async function loadDailySummary(): Promise<DailySummary> {
     OfflineStorage.getMeterReadings(),
   ]);
 
-  const today = new Date().toISOString().split('T')[0];
+  // Must be the same local key the readings were stamped with — a UTC "today"
+  // compared against a local stamp empties this screen every morning. See
+  // localDateKey.
+  const today = localDateKey();
   const accountFor = new Map(accounts.map((a) => [a.accountNumber, a]));
   const todays = readings.filter((r) => r.readingDate === today);
 

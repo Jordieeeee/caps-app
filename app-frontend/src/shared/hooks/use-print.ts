@@ -30,9 +30,9 @@ import { usePrinter } from '@/collector/services/printer-state';
  *   - No printer     → pairing; deep-link them to the printer screen.
  *
  * Every message ends by saying the record itself is safe. A collector who cannot
- * tell "the receipt didn't print" apart from "the payment didn't save" will
- * re-enter the payment, and a duplicate collection is a worse outcome than a
- * missing receipt.
+ * tell "the receipt didn't print" apart from "the reading didn't save" will go
+ * back and enter the reading again, and a meter read twice into two records is a
+ * worse outcome than a missing receipt.
  */
 export function usePrint() {
   const router = useRouter();

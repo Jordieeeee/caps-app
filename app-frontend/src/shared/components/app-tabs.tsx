@@ -2,7 +2,7 @@ import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import type { ReactNode } from 'react';
 
 import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useResolvedScheme } from '@/shared/theme/theme-preference';
 
 /**
  * The shared tab bar chrome. Relocated here from src/components/app-tabs.tsx.
@@ -21,8 +21,10 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
  * visually identical.
  */
 export default function AppTabs({ children }: { children: ReactNode }) {
-  const scheme = useColorScheme();
-  const colors = Colors[scheme === 'unspecified' || !scheme ? 'light' : scheme];
+  // Through the preference, not the OS: the bar is the one piece of chrome on
+  // every screen, and a tab bar that stayed light while the screens above it went
+  // dark would read as a rendering bug rather than as a setting.
+  const colors = Colors[useResolvedScheme()];
 
   return (
     <NativeTabs

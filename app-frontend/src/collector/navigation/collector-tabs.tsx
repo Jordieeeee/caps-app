@@ -36,21 +36,43 @@ export default function CollectorTabs() {
       </NativeTabs.Trigger>
 
       {/* "Route", not "Readings": the tab holds the accounts still to be walked,
-          not a log of the ones already done. A dial, because meter readers
-          recognise a gauge and do not recognise a house. */}
+          not a log of the ones already done.
+
+          A map, not the gauge it used to carry. The gauge described the *instrument*
+          — and so did `md="speed"`, a speedometer, which on Android read as trip
+          data rather than as a place to go. The screen behind this tab is a list of
+          addresses grouped by barangay, in walk order; a map is what a person
+          picturing "where am I going next" already has in their head. */}
       <NativeTabs.Trigger name="reading-reports">
         <NativeTabs.Trigger.Label>Route</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="gauge.with.dots.needle.bottom.50percent" md="speed" />
+        <NativeTabs.Trigger.Icon sf={{ default: 'map', selected: 'map.fill' }} md="map" />
       </NativeTabs.Trigger>
 
-      <NativeTabs.Trigger name="daily-collections">
-        <NativeTabs.Trigger.Label>Collections</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="banknote" md="payments" />
+      {/* "Summary", not "Collections", and a folder rather than a banknote.
+          Both words were wrong in the same direction: TWD's collectors read meters
+          and never take payment — a consumer pays at the office — so a tab named
+          for cash described a job nobody does, over a screen that has only ever
+          listed meter readings. The folder is the day's filed records: what was
+          read, and what has reached TWD. */}
+      <NativeTabs.Trigger name="daily-summary">
+        <NativeTabs.Trigger.Label>Summary</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf={{ default: 'folder', selected: 'folder.fill' }} md="folder" />
       </NativeTabs.Trigger>
 
+      {/* A document with a rising column chart — the platform twin of the Lucide
+          `file-chart-column-increasing` this screen uses in its own empty states.
+          `doc.text`/`description` drew a page of prose, which is what every other
+          document icon in the app already means (a bill, a service notice); this
+          tab holds figures for a month.
+
+          No `.fill` variant is declared: `chart.bar.doc.horizontal.fill` is not
+          reliably present across the SF Symbols versions shipped with the iOS
+          releases this app supports (deployment target 16.4), and a selected tab
+          with a missing symbol renders as a blank space. One symbol for both
+          states is the safe form — same as the More tab's `ellipsis`. */}
       <NativeTabs.Trigger name="service-reports">
         <NativeTabs.Trigger.Label>Reports</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf={{ default: 'doc.text', selected: 'doc.text.fill' }} md="description" />
+        <NativeTabs.Trigger.Icon sf="chart.bar.doc.horizontal" md="assessment" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="more">

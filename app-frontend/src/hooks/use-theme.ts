@@ -4,11 +4,16 @@
  */
 
 import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useResolvedScheme } from '@/shared/theme/theme-preference';
 
+/**
+ * Base neutrals for the active scheme.
+ *
+ * Resolves through the theme preference rather than `useColorScheme()` directly,
+ * so an in-app Light/Dark choice reaches every screen without any of them knowing
+ * about it. `useResolvedScheme` returns the OS value when no preference has been
+ * set — the previous behaviour, unchanged.
+ */
 export function useTheme() {
-  const scheme = useColorScheme();
-  const theme = scheme === 'unspecified' ? 'light' : scheme;
-
-  return Colors[theme];
+  return Colors[useResolvedScheme()];
 }

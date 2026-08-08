@@ -17,6 +17,7 @@ import { ReadingStateBadge } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
 import { TwdTextField } from '@/shared/components/twd-text-field';
 import { formatPeso } from '@/shared/format/currency';
+import { localDateKey } from '@/shared/format/date';
 import { downloadReceipt } from '@/collector/services/document-service';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useDownload } from '@/shared/hooks/use-download';
@@ -102,7 +103,13 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const readingDate = new Date().toISOString().split('T')[0];
+  // Local, not UTC. This is the date stamped on the record and printed on the
+  // consumer's bill; `toISOString()` would file a 7am reading under yesterday.
+  // See localDateKey.
+  const readingDate = localDateKey();
+
+  /** No reading has ever been filed for this meter — see the warning block below. */
+  const firstReading = account.lastReadingDate === null;
 
   const current = input.trim() === '' ? null : Number.parseInt(input, 10);
   const consumption = current === null ? null : current - account.previousReading;
@@ -233,11 +240,46 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
 
       <ScreenSection gap={Spacing.three}>
         <ThemedView type="backgroundElement" style={styles.card}>
-          <ReadOnlyRow label="Previous reading" value={`${account.previousReading}`} />
+          <ReadOnlyRow
+            label="Previous reading"
+            value={firstReading ? 'None on file' : `${account.previousReading}`}
+          />
           <ReadOnlyRow label="Billing period" value={billingPeriodFor(readingDate)} />
-          <ReadOnlyRow label="Meter no." value={account.meterNumber} />
+          {/* Blank when TWD holds no meter number — the Account schema has no such
+              field yet, so this is a real absence rather than a load failure. */}
+          <ReadOnlyRow label="Meter no." value={account.meterNumber || 'Not on file'} />
           <ReadOnlyRow label="Rate class" value={account.rateClass} />
         </ThemedView>
+
+        {/**
+         * No previous reading means the consumption below is measured from zero,
+         * and zero is not a measurement — it is the absence of one.
+         *
+         * A first reading of 1250 m³ against an assumed 0 bills this household for
+         * every cubic metre the meter has ever turned, which at the block rates in
+         * billing-calculator.ts is tens of thousands of pesos on a receipt the
+         * collector is about to hand over in person. It could equally be a genuine
+         * new connection, where measuring from zero is exactly right — the app
+         * cannot tell the two apart, and the person at the meter can.
+         *
+         * So it says so, and does not block: this used to be impossible to hit
+         * because the twelve fixture accounts all carried a previous reading.
+         * Against TWD's real data, an account nobody has read through this app yet
+         * is the ordinary case on day one of a rollout.
+         */}
+        {firstReading && (
+          <View
+            style={[styles.warning, { borderColor: theme.warning, backgroundColor: theme.warningSurface }]}
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite">
+            <Icon name="alert-triangle" size={18} color={theme.warning} />
+            <ThemedText type="small" style={[styles.warningText, { color: theme.warning }]}>
+              TWD has no previous reading for this meter, so this bill is calculated from zero.
+              That is correct for a brand-new connection and wrong for an existing one — check
+              with the office before printing if this meter has been read before.
+            </ThemedText>
+          </View>
+        )}
       </ScreenSection>
 
       <ScreenSection gap={Spacing.three}>

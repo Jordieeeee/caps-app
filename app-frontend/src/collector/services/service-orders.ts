@@ -1,4 +1,5 @@
 import { OfflineStorage } from '@/collector/services/offline-storage';
+import { localDateKey } from '@/shared/format/date';
 import type { NoticeKind } from '@/shared/utils/billing-calculator';
 
 /**
@@ -147,7 +148,10 @@ export class ServiceOrderService {
       reason: order.reason,
       status: 'completed',
       fieldVerification: note?.trim() ? note.trim() : undefined,
-      completionDate: new Date(confirmedAt).toISOString().split('T')[0],
+      // Local: the day the collector stood at the meter, not the UTC day. A
+      // disconnection carried out at 7am was being filed as the day before — see
+      // localDateKey.
+      completionDate: localDateKey(new Date(confirmedAt)),
       timestamp: confirmedAt,
       synced: false,
     });

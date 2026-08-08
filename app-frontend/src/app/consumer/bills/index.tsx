@@ -161,14 +161,20 @@ function BillsBody({ bills, filter, onFilter, onHowToPay }: BillsBodyProps) {
           chips={[
             {
               id: 'overdue',
-              label: `Overdue (${bills.filter((b) => b.status === 'overdue').length})`,
+              label: 'Overdue',
+              count: bills.filter((b) => b.status === 'overdue').length,
             },
-            { id: 'pending', label: `Unpaid (${bills.filter((b) => b.status === 'pending').length})` },
-            { id: 'paid', label: `Paid (${paidCount})` },
+            {
+              id: 'pending',
+              label: 'Unpaid',
+              count: bills.filter((b) => b.status === 'pending').length,
+            },
+            { id: 'paid', label: 'Paid', count: paidCount },
           ]}
           selectedId={filter}
           onSelect={onFilter}
-          allLabel={`All (${bills.length})`}
+          allLabel="All"
+          allCount={bills.length}
           accessibilityLabel="Filter bills by status"
         />
 

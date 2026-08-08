@@ -13,17 +13,6 @@ interface MeterReading {
   synced: boolean;
 }
 
-interface Collection {
-  id: string;
-  collectorId: string;
-  accountNumber: string;
-  amount: number;
-  paymentMethod: 'cash' | 'check' | 'electronic';
-  collectionDate: string;
-  timestamp: number;
-  synced: boolean;
-}
-
 interface ServiceOrder {
   id: string;
   type: 'reconnection' | 'disconnection';
@@ -38,18 +27,29 @@ interface ServiceOrder {
 }
 
 interface SyncQueueItem {
-  type: 'meter_reading' | 'collection' | 'service_order';
+  type: 'meter_reading' | 'service_order';
   data: any;
   timestamp: number;
 }
 
 const STORAGE_KEYS = {
   METER_READINGS: '@collector_meter_readings',
-  COLLECTIONS: '@collector_collections',
   SERVICE_ORDERS: '@collector_service_orders',
   SYNC_QUEUE: '@collector_sync_queue',
   LAST_SYNC: '@collector_last_sync',
 };
+
+/**
+ * Cash collections used to be stored here.
+ *
+ * TWD's collectors read meters; they do not take payment — a consumer pays at the
+ * office or through a partner. The store, its sync path, its printed "PAYMENT
+ * RECEIPT" and every total built on it have been removed. Nothing ever wrote this
+ * key (`saveCollection` had no callers in any screen), so there is no money record
+ * anywhere to migrate; the key is still named here so `clearAllData` can sweep it
+ * off any handset that carried an older build.
+ */
+const LEGACY_COLLECTIONS_KEY = '@collector_collections';
 
 export class OfflineStorage {
   // Meter Readings
@@ -95,53 +95,6 @@ export class OfflineStorage {
       await AsyncStorage.setItem(STORAGE_KEYS.METER_READINGS, JSON.stringify(updated));
     } catch (error) {
       console.error('Error marking meter reading synced:', error);
-      throw error;
-    }
-  }
-
-  // Collections
-  static async saveCollection(collection: Collection): Promise<void> {
-    try {
-      const existing = await this.getCollections();
-      existing.push(collection);
-      await AsyncStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify(existing));
-      
-      // Add to sync queue
-      await this.addToSyncQueue({
-        type: 'collection',
-        data: collection,
-        timestamp: Date.now(),
-      });
-    } catch (error) {
-      console.error('Error saving collection:', error);
-      throw error;
-    }
-  }
-
-  static async getCollections(): Promise<Collection[]> {
-    try {
-      const data = await AsyncStorage.getItem(STORAGE_KEYS.COLLECTIONS);
-      return data ? JSON.parse(data) : [];
-    } catch (error) {
-      console.error('Error getting collections:', error);
-      return [];
-    }
-  }
-
-  static async getUnsyncedCollections(): Promise<Collection[]> {
-    const collections = await this.getCollections();
-    return collections.filter(c => !c.synced);
-  }
-
-  static async markCollectionSynced(id: string): Promise<void> {
-    try {
-      const collections = await this.getCollections();
-      const updated = collections.map(c => 
-        c.id === id ? { ...c, synced: true } : c
-      );
-      await AsyncStorage.setItem(STORAGE_KEYS.COLLECTIONS, JSON.stringify(updated));
-    } catch (error) {
-      console.error('Error marking collection synced:', error);
       throw error;
     }
   }
@@ -255,7 +208,7 @@ export class OfflineStorage {
   static async clearAllData(): Promise<void> {
     try {
       await AsyncStorage.removeItem(STORAGE_KEYS.METER_READINGS);
-      await AsyncStorage.removeItem(STORAGE_KEYS.COLLECTIONS);
+      await AsyncStorage.removeItem(LEGACY_COLLECTIONS_KEY);
       await AsyncStorage.removeItem(STORAGE_KEYS.SERVICE_ORDERS);
       await AsyncStorage.removeItem(STORAGE_KEYS.SYNC_QUEUE);
       await AsyncStorage.removeItem(STORAGE_KEYS.LAST_SYNC);

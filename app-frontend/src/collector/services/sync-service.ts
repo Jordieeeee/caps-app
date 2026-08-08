@@ -9,7 +9,6 @@ export interface SyncStatus {
   lastSync: number;
   unsyncedCounts: {
     meterReadings: number;
-    collections: number;
     serviceOrders: number;
   };
 }
@@ -35,11 +34,15 @@ export interface SyncResult {
  * on one phone. Every status indicator downstream inherited that lie, including
  * the one guarding sign-out, which clears the session and the storage with it.
  *
- * The real calls below are POSTs to the three /sync endpoints, which were ready
- * and idempotent the whole time: each requires a `clientId`, is uniquely indexed
- * on it, and upserts rather than inserts, so replaying a queue after a lost
- * response cannot duplicate a reading or a payment. `collectorId` is deliberately
- * not sent — the server takes it from the auth token rather than trusting us.
+ * The real calls below are POSTs to the /sync endpoints, which were ready and
+ * idempotent the whole time: each requires a `clientId`, is uniquely indexed on
+ * it, and upserts rather than inserts, so replaying a queue after a lost response
+ * cannot duplicate a reading. `collectorId` is deliberately not sent — the server
+ * takes it from the auth token rather than trusting us.
+ *
+ * There were three queues; there are two. Cash collections are gone from this app
+ * entirely — TWD's collectors read meters and do not take payment — so there is no
+ * money leaving a handset for this class to be careful with.
  *
  * The honesty rule this class now owns: a record is marked synced only after the
  * server has acknowledged it, and `lastSync` advances only when the outbox
@@ -107,7 +110,6 @@ export class SyncService {
     try {
       for (const result of [
         await this.syncMeterReadings(),
-        await this.syncCollections(),
         await this.syncServiceOrders(),
       ]) {
         success += result.success;
@@ -158,33 +160,6 @@ export class SyncService {
     return { success, failed };
   }
 
-  private static async syncCollections(): Promise<SyncResult> {
-    const unsynced = await OfflineStorage.getUnsyncedCollections();
-    let success = 0;
-    let failed = 0;
-
-    for (const collection of unsynced) {
-      try {
-        await apiFetch('/collections/sync', {
-          method: 'POST',
-          body: JSON.stringify({
-            clientId: collection.id,
-            accountNumber: collection.accountNumber,
-            amount: collection.amount,
-            paymentMethod: collection.paymentMethod,
-            collectionDate: collection.collectionDate,
-          }),
-        });
-        await OfflineStorage.markCollectionSynced(collection.id);
-        success++;
-      } catch {
-        failed++;
-      }
-    }
-
-    return { success, failed };
-  }
-
   private static async syncServiceOrders(): Promise<SyncResult> {
     const unsynced = await OfflineStorage.getUnsyncedServiceOrders();
     let success = 0;
@@ -216,19 +191,17 @@ export class SyncService {
   }
 
   static async getSyncStatus(): Promise<SyncStatus> {
-    const [lastSync, readings, collections, orders] = await Promise.all([
+    const [lastSync, readings, orders] = await Promise.all([
       OfflineStorage.getLastSyncTimestamp(),
       OfflineStorage.getUnsyncedMeterReadings(),
-      OfflineStorage.getUnsyncedCollections(),
       OfflineStorage.getUnsyncedServiceOrders(),
     ]);
 
     return {
-      hasUnsyncedData: readings.length > 0 || collections.length > 0 || orders.length > 0,
+      hasUnsyncedData: readings.length > 0 || orders.length > 0,
       lastSync,
       unsyncedCounts: {
         meterReadings: readings.length,
-        collections: collections.length,
         serviceOrders: orders.length,
       },
     };

@@ -14,7 +14,6 @@ import { ScreenContainer, ScreenSection } from '@/shared/components/screen-conta
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { SkeletonBlock } from '@/shared/components/skeleton';
 import { TwdButton } from '@/shared/components/twd-button';
-import { formatPeso } from '@/shared/format/currency';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
@@ -81,23 +80,34 @@ export default function CollectorHome() {
 
         {state.status === 'ready' && (
           <>
+            {/* Both tiles are about water, not money.
+                The second used to be "Collected today · ₱0.00 · 0 payments" —
+                permanently zero, because nothing in this app has ever recorded a
+                payment and collectors do not take one. What a collector actually
+                wants beside "how many have I read" is "how many are left", and the
+                cached route finally makes that a real denominator. */}
             <View style={styles.tiles}>
               <Tile
                 icon="gauge"
                 label="Readings today"
                 value={`${state.data.readingsToday}`}
+                caption={state.data.readingsToday === 1 ? '1 meter' : 'meters read'}
                 onPress={() => router.push('/collector/reading-reports')}
               />
               <Tile
-                icon="banknote"
-                label="Collected today"
-                value={formatPeso(state.data.collectedToday)}
-                caption={
-                  state.data.collectionsToday === 1
-                    ? '1 payment'
-                    : `${state.data.collectionsToday} payments`
+                icon="map-pin"
+                label="Left to read"
+                value={
+                  state.data.routeTotal === 0
+                    ? '—'
+                    : `${Math.max(state.data.routeTotal - state.data.accountsRead, 0)}`
                 }
-                onPress={() => router.push('/collector/daily-collections')}
+                caption={
+                  state.data.routeTotal === 0
+                    ? 'route not downloaded'
+                    : `of ${state.data.routeTotal} on route`
+                }
+                onPress={() => router.push('/collector/reading-reports')}
               />
             </View>
 
@@ -115,12 +125,15 @@ export default function CollectorHome() {
           onPress={() => router.push('/collector/reading-reports')}
           accessibilityHint="Opens meter readings for your route"
         />
+        {/* Was "Record a collection", opening a screen with no collection to
+            record. The second CTA now goes where the shift actually ends: the
+            summary of what was read and whether TWD has it. */}
         <TwdButton
-          label="Record a collection"
-          icon="banknote"
+          label="Today's summary"
+          icon="file-text"
           variant="secondary"
-          onPress={() => router.push('/collector/daily-collections')}
-          accessibilityHint="Opens today's cash collections"
+          onPress={() => router.push('/collector/daily-summary')}
+          accessibilityHint="Opens today's readings and their submission status"
         />
       </ScreenSection>
     </ScreenContainer>

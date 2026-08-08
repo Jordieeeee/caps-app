@@ -108,7 +108,8 @@ export type SignedOutReason =
  * `unsynced` is the collector-only state: we are running on a token we could not
  * revalidate. It is deliberately distinct from `offline` — "no signal but my
  * credentials are current" and "no signal and my credentials are stale" carry
- * different urgency for someone deciding whether to keep collecting cash.
+ * different urgency for someone deciding whether to keep reading meters and
+ * handing over printed bills against a session TWD may no longer honour.
  */
 export type SessionSync = 'online' | 'offline' | 'unsynced';
 

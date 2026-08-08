@@ -1,20 +1,42 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { OfflineStorage } from '@/collector/services/offline-storage';
+import { localDateKey } from '@/shared/format/date';
+import { apiFetch } from '@/shared/services/api-client';
 import type { RouteAccount } from '@/shared/utils/billing-calculator';
 
 /**
- * The collector's assigned route, on the phone.
+ * The collector's route, on the phone.
  *
  * The whole flow depends on this being local: the collector walks into a barangay
  * with no signal and has to open an account, see last month's reading, and bill
  * against it. Anything fetched at the point of use is a flow that stops working
- * where it is needed most, so the route is pulled once while there is signal and
- * read from cache thereafter.
+ * where it is needed most, so the route is pulled while there is signal and read
+ * from cache thereafter.
+ *
+ * ⚠️ This used to be twelve hard-coded households — "Carlos Garcia, 24 Mabini
+ * Street" and friends — with a TODO promising a real endpoint. GET /accounts/route
+ * now exists (app-backend/controllers/accountController.js) and the fixture is
+ * deleted rather than kept as a fallback: a route screen that quietly falls back
+ * to invented accounts is a collector knocking on a door that TWD does not bill,
+ * and printing a receipt against a previous reading nobody recorded. An empty
+ * route is a problem the collector can see and phone the office about; a plausible
+ * fake one is not.
  */
 
+/** Cache key kept from the fixture era so an installed handset keeps its route. */
 const STORAGE_KEY = '@collector_route_accounts';
-const PRELOADED_AT_KEY = '@collector_route_preloaded_at';
+const SYNCED_AT_KEY = '@collector_route_preloaded_at';
+
+/**
+ * How long a cached route is served without trying the network again.
+ *
+ * Six hours is a shift. The route changes when the office links or disconnects a
+ * meter — days apart, not minutes — so re-pulling on every focus would spend a
+ * field handset's battery and data on an answer that is almost always identical.
+ * Pull-to-refresh overrides it, and so does a cold cache.
+ */
+const STALE_MS = 6 * 60 * 60 * 1000;
 
 /**
  * What the collector still has to do at this address.
@@ -32,202 +54,182 @@ export interface RouteAccountRow extends RouteAccount {
   consumption?: number;
 }
 
+export interface BarangaySummary {
+  name: string;
+  count: number;
+}
+
 /**
- * Mock route.
+ * A route as the screen renders it, plus how much to trust it.
  *
- * TODO: Replace with GET /api/accounts/route once the endpoint exists. The
- * backend's Account model currently carries accountNumber, address, type and
- * status — it has no route assignment, no walk sequence, no meter number, and no
- * last-confirmed reading, so there is nothing to fetch yet. Those five fields are
- * what this screen needs; the shape below is the request being made of the API.
- *
- * Sequence is walk order, not account order: the route is a physical path through
- * a barangay, and a collector who has to re-sort it in their head at every gate is
- * being handed the office's data model instead of their own job.
+ * `syncedAt` and `fromCache` are not diagnostics — they are the difference between
+ * "these are your accounts" and "these are the accounts as of Tuesday". The screen
+ * has to be able to say which, so the loader has to return which.
  */
-const MOCK_ROUTE: RouteAccount[] = [
-  {
-    id: 'acct-1',
-    sequence: 1,
-    accountNumber: 'WD-12345',
-    consumerName: 'Carlos Garcia',
-    address: '24 Mabini Street, Brgy. Poblacion 3, Tanauan City',
-    meterNumber: 'MTR-884213',
-    previousReading: 1250,
-    rateClass: 'Residential',
-  },
-  {
-    id: 'acct-2',
-    sequence: 2,
-    accountNumber: 'WD-12346',
-    consumerName: 'Ana Martinez',
-    address: '117 J.P. Laurel Highway, Brgy. Darasa, Tanauan City',
-    meterNumber: 'MTR-884219',
-    previousReading: 980,
-    rateClass: 'Residential',
-  },
-  {
-    id: 'acct-3',
-    sequence: 3,
-    accountNumber: 'WD-12347',
-    consumerName: 'Roberto Rodriguez',
-    address: '8 Rizal Avenue, Brgy. Sambat, Tanauan City',
-    meterNumber: 'MTR-884227',
-    previousReading: 1450,
-    rateClass: 'Residential',
-  },
-  {
-    id: 'acct-4',
-    sequence: 4,
-    accountNumber: 'WD-12348',
-    consumerName: 'Maria Clara Bautista',
-    address: '52 Del Pilar Street, Brgy. Poblacion 4, Tanauan City',
-    meterNumber: 'MTR-884231',
-    previousReading: 1102,
-    rateClass: 'Residential',
-  },
-  {
-    id: 'acct-5',
-    sequence: 5,
-    accountNumber: 'WD-12349',
-    consumerName: 'Jose Miguel Aquino',
-    address: '9 Bonifacio Extension, Brgy. Trapiche, Tanauan City',
-    meterNumber: 'MTR-884240',
-    previousReading: 1338,
-    rateClass: 'Residential',
-  },
-  {
-    id: 'acct-6',
-    sequence: 6,
-    accountNumber: 'WD-12350',
-    consumerName: 'Lorna Villanueva',
-    address: '3 Santol Road, Brgy. Santol, Tanauan City',
-    meterNumber: 'MTR-884256',
-    previousReading: 915,
-    rateClass: 'Residential',
-  },
-  {
-    id: 'acct-7',
-    sequence: 7,
-    accountNumber: 'WD-12351',
-    consumerName: 'Aling Nena Sari-Sari Store',
-    address: '61 J.P. Laurel Highway, Brgy. Darasa, Tanauan City',
-    meterNumber: 'MTR-884262',
-    previousReading: 1487,
-    rateClass: 'Commercial',
-  },
-  {
-    id: 'acct-8',
-    sequence: 8,
-    accountNumber: 'WD-12352',
-    consumerName: 'Ricardo Dimaculangan',
-    address: '14 Malvar Street, Brgy. Poblacion 1, Tanauan City',
-    meterNumber: 'MTR-884270',
-    previousReading: 1024,
-    rateClass: 'Residential',
-  },
-  {
-    id: 'acct-9',
-    sequence: 9,
-    accountNumber: 'WD-12353',
-    consumerName: 'Teresita Mercado',
-    address: '77 Gonzales Street, Brgy. Gonzales, Tanauan City',
-    meterNumber: 'MTR-884288',
-    previousReading: 1195,
-    rateClass: 'Residential',
-  },
-  {
-    id: 'acct-10',
-    sequence: 10,
-    accountNumber: 'WD-12354',
-    consumerName: 'Eduardo Panganiban',
-    address: '5 Ambulong Road, Brgy. Ambulong, Tanauan City',
-    meterNumber: 'MTR-884293',
-    previousReading: 1408,
-    rateClass: 'Residential',
-  },
-  {
-    id: 'acct-11',
-    sequence: 11,
-    accountNumber: 'WD-12355',
-    consumerName: 'Corazon Alcantara',
-    address: '30 Natatas Street, Brgy. Natatas, Tanauan City',
-    meterNumber: 'MTR-884301',
-    previousReading: 963,
-    rateClass: 'Residential',
-  },
-  {
-    id: 'acct-12',
-    sequence: 12,
-    accountNumber: 'WD-12356',
-    consumerName: 'Benigno Katigbak',
-    address: '18 Ulango Street, Brgy. Ulango, Tanauan City',
-    meterNumber: 'MTR-884315',
-    previousReading: 1276,
-    rateClass: 'Residential',
-  },
-];
+export interface RouteSnapshot {
+  rows: RouteAccountRow[];
+  barangays: BarangaySummary[];
+  /** Epoch ms of the last successful pull. Null means this phone has never had one. */
+  syncedAt: number | null;
+  /** True when the rows came off the cache because the network was not used or failed. */
+  fromCache: boolean;
+  /**
+   * True when TWD was actually asked and could not be reached.
+   *
+   * Distinct from `fromCache`, which is also true in the ordinary case where the
+   * cache was fresh enough that no request was made. Only this one means a pull
+   * was attempted and lost — a pull-to-refresh that silently returns the same rows
+   * is the app failing without saying so.
+   */
+  pullFailed: boolean;
+}
+
+interface RouteResponse {
+  accounts: RouteAccount[];
+  barangays: BarangaySummary[];
+}
+
+interface RouteCache {
+  accounts: RouteAccount[];
+  barangays: BarangaySummary[];
+}
+
+/** Older installs cached a bare array, before barangays existed. */
+function parseCache(raw: string): RouteCache {
+  const parsed = JSON.parse(raw);
+  if (Array.isArray(parsed)) return { accounts: parsed.map(normalise), barangays: [] };
+  return {
+    accounts: (parsed.accounts ?? []).map(normalise),
+    barangays: parsed.barangays ?? [],
+  };
+}
+
+/**
+ * Fill in fields a cache written by an older build cannot have.
+ *
+ * Without this, an account cached before `barangay` existed groups under the
+ * string "undefined" — a heading no barangay has, on a screen a collector uses to
+ * decide where to walk.
+ */
+function normalise(account: RouteAccount): RouteAccount {
+  return {
+    ...account,
+    // A row cached by an older build can carry the account number in place of a
+    // name — that build sourced the route from `accounts`, where four rows had no
+    // consumer behind them at all. Say so rather than repeating the number on both
+    // lines of the card.
+    consumerName:
+      account.consumerName && account.consumerName !== account.accountNumber
+        ? account.consumerName
+        : 'Name not on file',
+    consumerNo: account.consumerNo ?? null,
+    barangay: account.barangay || 'Unassigned',
+    meterNumber: account.meterNumber ?? '',
+    lastReadingDate: account.lastReadingDate ?? null,
+    status: account.status ?? 'active',
+    connectionStatus: account.connectionStatus ?? null,
+  };
+}
+
+function summarise(accounts: RouteAccount[]): BarangaySummary[] {
+  const counts = new Map<string, number>();
+  for (const account of accounts) {
+    counts.set(account.barangay, (counts.get(account.barangay) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => {
+      if (a.name === 'Unassigned') return 1;
+      if (b.name === 'Unassigned') return -1;
+      return a.name.localeCompare(b.name);
+    });
+}
 
 export class RouteAccountService {
   /**
-   * Pull the route while there is still signal, and cache it.
+   * Pull the route from TWD and cache it. Throws if it cannot.
    *
-   * Never throws on a network failure — a collector opening the app in the field
-   * has no connection by definition, and the cached route from the depot is the
-   * correct thing to work from. Only a cold cache with no network is a real error,
-   * and the caller distinguishes that by getting an empty list back.
+   * Throwing is the point: the caller decides what an unreachable server means,
+   * and for a collector in the field it usually means "carry on with what is on
+   * the phone" — which is a decision that needs to know the pull failed.
    */
-  static async preload(): Promise<RouteAccount[]> {
-    // TODO: const accounts = await apiFetch('/accounts/route') once it exists.
-    const accounts = MOCK_ROUTE;
+  static async pull(): Promise<RouteCache> {
+    const { accounts, barangays } = await apiFetch<RouteResponse>('/accounts/route');
+    const cache: RouteCache = { accounts: accounts.map(normalise), barangays };
 
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
-      await AsyncStorage.setItem(PRELOADED_AT_KEY, Date.now().toString());
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
+      await AsyncStorage.setItem(SYNCED_AT_KEY, Date.now().toString());
     } catch {
-      // Cache write failed; the in-memory list this call returns is still good for
-      // the session. Losing the cache costs the next cold start, not this one.
+      // Cache write failed; the list this call returns is still good for the
+      // session. Losing the cache costs the next cold start, not this one.
     }
 
-    return accounts;
+    return cache;
   }
 
+  /** The route saved on this phone. Empty — never invented — when there is none. */
   static async getCached(): Promise<RouteAccount[]> {
+    return (await this.readCache()).accounts;
+  }
+
+  private static async readCache(): Promise<RouteCache> {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
-      if (raw) return JSON.parse(raw) as RouteAccount[];
+      if (raw) return parseCache(raw);
     } catch {
       // Corrupt cache reads as no cache.
     }
-    return this.preload();
+    return { accounts: [], barangays: [] };
   }
 
-  static async preloadedAt(): Promise<number> {
+  static async syncedAt(): Promise<number | null> {
     try {
-      const raw = await AsyncStorage.getItem(PRELOADED_AT_KEY);
-      return raw ? Number.parseInt(raw, 10) : 0;
+      const raw = await AsyncStorage.getItem(SYNCED_AT_KEY);
+      const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+      return Number.isFinite(parsed) ? parsed : null;
     } catch {
-      return 0;
+      return null;
     }
   }
 
   /**
-   * The route as the list screen needs it: every account, in walk order, each
-   * carrying what the collector has already done to it today.
+   * The route as the list screen needs it: every account, grouped by barangay,
+   * each carrying what the collector has already done to it today.
    *
    * The join happens here rather than in the screen because "has this been read?"
    * is a question about two stores — the route cache and the reading outbox — and
    * a screen that answers it inline gets it subtly wrong the moment a reading is
    * saved but not yet synced.
    */
-  static async list(): Promise<RouteAccountRow[]> {
-    const [accounts, readings] = await Promise.all([
-      this.getCached(),
-      OfflineStorage.getMeterReadings(),
-    ]);
+  static async list({ force = false }: { force?: boolean } = {}): Promise<RouteSnapshot> {
+    const before = await this.syncedAt();
+    const stale = before === null || Date.now() - before > STALE_MS;
 
-    const today = new Date().toISOString().split('T')[0];
-    const byAccount = new Map<string, { currentReading: number; consumption: number; synced: boolean }>();
+    let cache: RouteCache | null = null;
+    let pullFailed = false;
+    if (force || stale) {
+      try {
+        cache = await this.pull();
+      } catch {
+        pullFailed = true;
+        // Offline, or TWD unreachable. The cached route from the depot is the
+        // correct thing to work from — this is the expected case in the field,
+        // not an error, and the snapshot reports it as `fromCache`.
+      }
+    }
+
+    const fromCache = cache === null;
+    if (!cache) cache = await this.readCache();
+
+    const readings = await OfflineStorage.getMeterReadings();
+    // Local, matching the stamp on the readings themselves. A UTC "today" here
+    // showed a meter read at 7am as still Unread. See localDateKey.
+    const today = localDateKey();
+    const byAccount = new Map<
+      string,
+      { currentReading: number; consumption: number; synced: boolean }
+    >();
 
     for (const r of readings) {
       if (r.readingDate !== today) continue;
@@ -239,7 +241,12 @@ export class RouteAccountService {
       });
     }
 
-    return accounts
+    /**
+     * Ordered by the server's walk sequence and never re-sorted by status.
+     * Sorting the done ones to the bottom would look tidier and would also
+     * reorder a physical walking path while someone is in the middle of it.
+     */
+    const rows = cache.accounts
       .map((account) => {
         const reading = byAccount.get(account.accountNumber);
         return {
@@ -250,10 +257,20 @@ export class RouteAccountService {
         } satisfies RouteAccountRow;
       })
       .sort((a, b) => a.sequence - b.sequence);
+
+    return {
+      rows,
+      // Falls back to a client-side count for a cache written before the server
+      // sent a summary; the two agree, because both count the same list.
+      barangays: cache.barangays.length ? cache.barangays : summarise(cache.accounts),
+      syncedAt: fromCache ? before : await this.syncedAt(),
+      fromCache,
+      pullFailed,
+    };
   }
 
   static async get(id: string): Promise<RouteAccountRow | null> {
-    const rows = await this.list();
+    const { rows } = await this.list();
     return rows.find((r) => r.id === id) ?? null;
   }
 }

@@ -328,24 +328,20 @@ export class PrinterService {
     await this.printLines(formatNoticeLines(notice));
   }
 
-  // Print collection receipt
-  static async printCollectionReceipt(collection: any): Promise<void> {
-    const printData: PrintData = {
-      type: 'receipt',
-      title: 'PAYMENT RECEIPT',
-      content: [
-        `Account: ${collection.accountNumber}`,
-        `Amount: ₱${collection.amount.toFixed(2)}`,
-        `Method: ${collection.paymentMethod.toUpperCase()}`,
-        `Date: ${collection.collectionDate}`,
-        `Collector: ${collection.collectorId}`,
-        `Receipt ID: ${collection.id}`,
-      ],
-      footer: 'Official Payment Receipt',
-    };
-
-    await this.print(printData);
-  }
+  /**
+   * `printCollectionReceipt` is gone, and could not have been kept.
+   *
+   * It printed a document headed "PAYMENT RECEIPT" and footed "Official Payment
+   * Receipt", against a payment this app has never been able to record — nothing
+   * ever called it, and nothing ever called `saveCollection` either. TWD's
+   * collectors read meters; a consumer pays at the office. An official receipt for
+   * money nobody took is not a feature with no users, it is a document that should
+   * not exist.
+   *
+   * It was also unprintable as written: `₱` is not in the PT-210's character set
+   * (see TRANSLITERATE in escpos.ts), so the amount would have printed as `?486.00`
+   * on the one line where the figure has to be unambiguous.
+   */
 
   // `printServiceOrderReceipt` and `printReadingReport` were removed with the
   // screens that called them. The first printed an untitled order stub with no

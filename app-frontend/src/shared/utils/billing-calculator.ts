@@ -40,7 +40,12 @@ export const RECEIPT_WIDTH = 32;
 // TODO: Confirm TWD's actual payment window.
 export const DUE_DAYS = 15;
 
-export type RateClass = 'Residential' | 'Commercial';
+/**
+ * `Government` is the third value the Account schema allows and the receipt has
+ * always been able to print — it was missing here only because the fixture this
+ * type was written against had no government meters in it.
+ */
+export type RateClass = 'Residential' | 'Commercial' | 'Government';
 
 /**
  * An account as pre-loaded onto the phone before the collector goes offline.
@@ -52,11 +57,49 @@ export interface RouteAccount {
   /** Walk order. The collector's route is a physical path, not a sorted list. */
   sequence: number;
   accountNumber: string;
+  /**
+   * Who lives here. Always a person — the route is built from the district's
+   * consumer registry, so a stop exists because a consumer does, and the name is
+   * present by construction rather than by a lookup that can miss. Reads "Name not
+   * on file" only if the registry itself holds no name of any shape.
+   */
   consumerName: string;
+  /** The portal's customer number, for looking the household up at the office. */
+  consumerNo?: string | null;
   address: string;
+  /**
+   * Which barangay this stop is in — the unit a route is actually walked in, and
+   * the one the Route screen groups and filters on. `Unassigned` when neither the
+   * consumer registry nor the address line names one; see
+   * app-backend/utils/barangay.js for why that is a value and not a guess.
+   */
+  barangay: string;
+  /** Empty when TWD holds no meter number for this account. */
   meterNumber: string;
   previousReading: number;
+  /**
+   * `YYYY-MM-DD` of the reading `previousReading` came from, or null when this
+   * meter has never been read through the app.
+   *
+   * Null makes `previousReading: 0` readable for what it is — an absence, not a
+   * measurement. Billing a first reading of 1250 against an assumed 0 charges the
+   * consumer for the entire life of the meter, so the screen must be able to tell
+   * the two apart before it prints anything.
+   */
+  lastReadingDate: string | null;
   rateClass: RateClass;
+  /** The district's own classification, as stored. Drives `rateClass`. */
+  accountType?: 'residential' | 'commercial' | 'government';
+  /** `inactive` accounts are still listed — a disconnected meter is not read. */
+  status: 'active' | 'inactive';
+  /**
+   * The portal's service-connection state, passed through in the portal's own
+   * words (`pending_installation`, …). Null when TWD holds no connection record.
+   *
+   * Not the same fact as `status`: an account can be active on the books while its
+   * meter has not been installed yet, which is a stop with nothing on it to read.
+   */
+  connectionStatus?: string | null;
 }
 
 export interface Bill {

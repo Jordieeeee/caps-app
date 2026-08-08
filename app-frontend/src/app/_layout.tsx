@@ -1,10 +1,13 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider, useAuth } from '@/shared/auth/auth-context';
 import { ScreenLoading } from '@/shared/components/screen-message';
+import {
+  ThemePreferenceProvider,
+  useResolvedScheme,
+} from '@/shared/theme/theme-preference';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -58,14 +61,29 @@ function RootNavigator() {
 }
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  /**
+   * The preference provider wraps the navigation ThemeProvider, not the other way
+   * round: navigation chrome (headers, back buttons, the card background behind a
+   * push transition) has to follow the in-app choice too, or a collector who picks
+   * Light gets light screens sliding over a black canvas.
+   */
+  return (
+    <ThemePreferenceProvider>
+      <NavigationTheme>
+        <AnimatedSplashOverlay />
+        <AuthProvider>
+          <RootNavigator />
+        </AuthProvider>
+      </NavigationTheme>
+    </ThemePreferenceProvider>
+  );
+}
+
+/** Reads the resolved scheme, so it must sit inside the provider above. */
+function NavigationTheme({ children }: { children: React.ReactNode }) {
+  const scheme = useResolvedScheme();
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AuthProvider>
-        <RootNavigator />
-      </AuthProvider>
-    </ThemeProvider>
+    <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>{children}</ThemeProvider>
   );
 }

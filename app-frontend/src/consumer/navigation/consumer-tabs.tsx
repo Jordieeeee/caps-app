@@ -44,11 +44,19 @@ export default function ConsumerTabs() {
         <NativeTabs.Trigger.Icon sf={{ default: 'house', selected: 'house.fill' }} md="home" />
       </NativeTabs.Trigger>
 
+      {/* A wallet, not a document. `doc.text` described the artefact — a bill is a
+          piece of paper — while the tab is opened to answer "what do I owe and have
+          I paid it?", which is a question about money. It also stops colliding with
+          the collector bar's Reports tab, which legitimately is a document.
+
+          `wallet.pass` rather than `wallet.bifold`: bifold is iOS 17+ and this
+          project's deployment target is 16.4 (ios/Podfile), where it would render
+          as a blank tab. */}
       <NativeTabs.Trigger name="bills">
         <NativeTabs.Trigger.Label>Bills</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
-          sf={{ default: 'doc.text', selected: 'doc.text.fill' }}
-          md="receipt_long"
+          sf={{ default: 'wallet.pass', selected: 'wallet.pass.fill' }}
+          md="account_balance_wallet"
         />
       </NativeTabs.Trigger>
 

@@ -26,6 +26,11 @@ export default function CollectorMoreLayout() {
   return (
     <Stack screenOptions={{ headerShown: true, headerBackTitle: 'More' }}>
       <Stack.Screen name="index" options={{ title: 'More' }} />
+      <Stack.Screen name="account" options={{ title: 'Account' }} />
+      <Stack.Screen
+        name="edit-details"
+        options={{ title: 'Edit Details', headerBackTitle: 'Account' }}
+      />
       <Stack.Screen name="sync-status" options={{ title: 'Sync Status' }} />
       <Stack.Screen name="reconnections/index" options={{ title: 'Reconnections' }} />
       <Stack.Screen

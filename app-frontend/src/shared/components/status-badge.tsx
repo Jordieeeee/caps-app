@@ -17,8 +17,8 @@ import { Radius, Spacing, type TwdColors } from '@/shared/theme/twd';
  *    they should have used were already sitting in shared/theme/twd.ts and all
  *    clear 4.5:1.
  *
- * 2. "PENDING" meant two unrelated things — a payment awaiting collection, and a
- *    record awaiting upload — in the same colour, on the same screen, with no
+ * 2. "PENDING" meant two unrelated things — a bill the consumer has not paid, and
+ *    a record awaiting upload — in the same colour, on the same screen, with no
  *    explanation anywhere in the UI. A collector cannot act on an ambiguous badge.
  *    Sync status and payment status are therefore separate types here, and their
  *    labels are worded so they can never collide: sync says "Pending sync", never

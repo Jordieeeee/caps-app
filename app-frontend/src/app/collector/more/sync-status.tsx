@@ -29,7 +29,6 @@ export default function SyncStatusScreen() {
     lastSync: 0,
     unsyncedCounts: {
       meterReadings: 0,
-      collections: 0,
       serviceOrders: 0,
     },
   });
@@ -85,9 +84,7 @@ export default function SyncStatusScreen() {
   };
 
   const totalUnsynced =
-    syncStatus.unsyncedCounts.meterReadings +
-    syncStatus.unsyncedCounts.collections +
-    syncStatus.unsyncedCounts.serviceOrders;
+    syncStatus.unsyncedCounts.meterReadings + syncStatus.unsyncedCounts.serviceOrders;
 
   return (
     <ScrollView
@@ -151,12 +148,9 @@ export default function SyncStatusScreen() {
             description="Offline meter reading records"
             count={syncStatus.unsyncedCounts.meterReadings}
           />
-          <UnsyncedRow
-            icon="banknote"
-            label="Collections"
-            description="Offline payment collection records"
-            count={syncStatus.unsyncedCounts.collections}
-          />
+          {/* There was a "Collections — offline payment collection records" row
+              here, permanently reading 0: nothing in this app has ever recorded a
+              payment, and TWD's collectors do not take one. */}
           <UnsyncedRow
             icon="file-check"
             label="Service Orders"
@@ -242,7 +236,7 @@ export default function SyncStatusScreen() {
             • Data is automatically synced when internet connection is available
           </ThemedText>
           <ThemedText type="small" style={styles.infoText}>
-            • All meter readings, collections, and service orders are stored locally
+            • Meter readings and service orders are stored on this phone until sent
           </ThemedText>
           <ThemedText type="small" style={styles.infoText}>
             • Conflict resolution is handled server-side during sync

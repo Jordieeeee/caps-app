@@ -42,7 +42,15 @@ export type IconName =
   | 'message-square'
   | 'log-out'
   | 'inbox'
-  | 'bluetooth';
+  | 'bluetooth'
+  | 'user'
+  | 'map'
+  | 'map-pin'
+  | 'sun'
+  | 'moon'
+  | 'smartphone'
+  | 'pencil'
+  | 'file-chart';
 
 interface IconProps {
   name: IconName;
@@ -243,6 +251,79 @@ function glyph(name: IconName, c: Common) {
         <>
           <Polyline points="22 12 16 12 14 15 10 15 8 12 2 12" {...c} />
           <Path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z" {...c} />
+        </>
+      );
+    case 'user':
+      return (
+        <>
+          <Path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" {...c} />
+          <Circle cx={12} cy={7} r={4} {...c} />
+        </>
+      );
+    // The screen-content twin of the Route tab's SF/Material map. Both had to
+    // change together: a tab glyph and the empty state it leads to are the same
+    // idea seen twice, and a map in the bar over a gauge in the page is a seam.
+    case 'map':
+      return (
+        <>
+          <Path d="M15 6.5 21 4v13.5L15 20 9 17.5 3 20V6.5L9 4l6 2.5Z" {...c} />
+          <Path d="M9 4v13.5M15 6.5V20" {...c} />
+        </>
+      );
+    case 'map-pin':
+      return (
+        <>
+          <Path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" {...c} />
+          <Circle cx={12} cy={10} r={3} {...c} />
+        </>
+      );
+    // The appearance toggle's three states. A sun and a moon are the two glyphs
+    // every OS already uses for this, so they need no label to be understood —
+    // they get one anyway, because "understood without a label" is not the same
+    // as "understood in the rain by someone who has never opened this screen".
+    case 'sun':
+      return (
+        <>
+          <Circle cx={12} cy={12} r={4} {...c} />
+          <Path
+            d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+            {...c}
+          />
+        </>
+      );
+    case 'moon':
+      return <Path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" {...c} />;
+    case 'smartphone':
+      return (
+        <>
+          <Rect x={5} y={2} width={14} height={20} rx={2} {...c} />
+          <Path d="M12 18h.01" {...c} />
+        </>
+      );
+    case 'pencil':
+      return (
+        <>
+          <Path d="M21.2 6.2 17.8 2.8a2 2 0 0 0-2.8 0L3 14.8V21h6.2L21.2 9a2 2 0 0 0 0-2.8Z" {...c} />
+          <Path d="m15 5 4 4" {...c} />
+        </>
+      );
+    /**
+     * Lucide's `file-chart-column-increasing`, shortened to `file-chart` here for
+     * the same reason the rest of this set is: the names are call-site labels, not
+     * an upstream index, and a 30-character union member wraps every line it
+     * appears on.
+     *
+     * Three columns of rising height inside a document — a report, not a chart.
+     * The Reports tab carries the platform twin of this glyph (SF Symbols /
+     * Material, see collector-tabs.tsx); a tab icon and the empty state it leads to
+     * being different pictures of the same idea is a seam.
+     */
+    case 'file-chart':
+      return (
+        <>
+          <Path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" {...c} />
+          <Path d="M14 2v6h6" {...c} />
+          <Path d="M8 18v-2M12 18v-4M16 18v-6" {...c} />
         </>
       );
   }

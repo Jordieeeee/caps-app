@@ -12,6 +12,7 @@ import { Icon, type IconName } from '@/shared/components/icon';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { SkeletonBlock } from '@/shared/components/skeleton';
+import { ThemeToggle } from '@/shared/components/theme-toggle';
 import { TwdButton } from '@/shared/components/twd-button';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
@@ -49,6 +50,16 @@ export default function CollectorMore() {
       />
 
       <ScreenSection gap={Spacing.two}>
+        {/* First row, above the operational ones, because it is the only one that
+            answers "is the app wrong, or is my record wrong?" — and because the
+            header above it is the *session's* copy of a name that can be ninety
+            days old. See collector/services/collector-profile.ts. */}
+        <NavRow
+          icon="user"
+          label="Account"
+          detail={session.user.employeeId ?? 'Your TWD details'}
+          onPress={() => router.push('/collector/more/account')}
+        />
         <NavRow
           icon="refresh"
           label="Sync status"
@@ -95,6 +106,19 @@ export default function CollectorMore() {
           detail="Delinquent accounts"
           onPress={() => router.push('/collector/more/disconnections')}
         />
+      </ScreenSection>
+
+      {/* Appearance sits above Session and below the navigation rows: it is a
+          setting, not a destination, so it does not deserve a row that pushes a
+          screen — and a collector standing in the sun who needs the light theme
+          needs it in one tap, not two. */}
+      <ScreenSection gap={Spacing.two}>
+        <ThemedText type="defaultBold">Appearance</ThemedText>
+        <ThemeToggle />
+        <ThemedText type="small" themeColor="textSecondary">
+          Dark is hard to read in direct sunlight. Set Light for a daytime round and this
+          phone will keep it, whatever the phone&apos;s own schedule says.
+        </ThemedText>
       </ScreenSection>
 
       <ScreenSection gap={Spacing.three}>

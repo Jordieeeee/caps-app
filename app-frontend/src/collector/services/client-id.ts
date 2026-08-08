@@ -8,10 +8,11 @@
  * collide onto one, because the upsert would silently overwrite the first.
  *
  * Which is exactly what the previous id risked. Records used
- * `Date.now().toString()`: two collections saved inside the same millisecond
- * produced the same id, and `$set` on a unique clientId means the second cash
- * payment overwrites the first. Not a merge, not a duplicate — a payment that
- * quietly stops existing. Tapping Save twice on a laggy phone is enough.
+ * `Date.now().toString()`: two records saved inside the same millisecond produced
+ * the same id, and `$set` on a unique clientId means the second reading overwrites
+ * the first. Not a merge, not a duplicate — a meter reading that quietly stops
+ * existing, on a walk the collector will not repeat. Tapping Save twice on a laggy
+ * phone is enough.
  *
  * No crypto dependency: `expo-crypto` would buy randomUUID, but this id only has
  * to be unique across one collector's outbox, and a millisecond timestamp plus 40
