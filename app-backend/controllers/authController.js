@@ -157,6 +157,10 @@ async function authenticate(email, password) {
         ErrorCodes.ACCOUNT_DISABLED
       );
     }
+    // Portal-created consumer/collector profiles carry no `email` of their own
+    // (the portal's registry doesn't store it) — the login email lives only on
+    // the credential we just matched against.
+    if (!profile.email) profile.email = cred.email;
     return profile;
   }
 
@@ -247,6 +251,9 @@ exports.refresh = async (req, res) => {
   if (cred && cred.isLocked()) {
     throw httpError(403, ACCOUNT_LOCKED_MESSAGE, ErrorCodes.ACCOUNT_DISABLED);
   }
+  // Same portal-profile gap as authenticate(): backfill email so a refreshed
+  // session doesn't drop it from the `user` the client already has.
+  if (cred && !user.email) user.email = cred.email;
 
   const session = await issueSession(user);
   stored.revokedAt = new Date();
@@ -273,5 +280,10 @@ exports.me = async (req, res) => {
   const user = await Model.findById(req.user.sub);
   if (!user) throw httpError(404, 'User not found');
   assertActive(user);
+  // Same portal-profile gap as authenticate()/refresh().
+  if (!user.email) {
+    const cred = await AppCredential.findByProfile(user.id);
+    if (cred) user.email = cred.email;
+  }
   res.json({ user });
 };
