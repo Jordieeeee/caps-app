@@ -8,6 +8,7 @@ router.use('/accounts', require('./accountRoutes'));
 router.use('/billing', require('./billingRoutes'));
 router.use('/announcements', require('./announcementRoutes'));
 router.use('/feedback', require('./feedbackRoutes'));
+router.use('/profile', require('./profileRoutes'));
 router.use('/notifications', require('./notificationRoutes'));
 
 module.exports = router;

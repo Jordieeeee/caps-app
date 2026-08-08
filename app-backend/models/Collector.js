@@ -13,7 +13,9 @@ const collectorSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: true },
-    role: { type: String, enum: ['Collector'], default: 'Collector', immutable: true },
+    // Not `immutable: true` — see Consumer.js for why that suppresses the
+    // default on hydrate for any document missing this field.
+    role: { type: String, enum: ['Collector'], default: 'Collector' },
     /** Auth-level account state. `disabled` blocks token issuance outright. */
     status: { type: String, enum: ['active', 'disabled'], default: 'active', required: true },
     routeIds: [{ type: String }], // assigned routes
