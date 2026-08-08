@@ -92,9 +92,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const { isOnline, isResolved } = useConnectivity();
 
   // Read connectivity from a ref inside callbacks so they don't need it as a dep
-  // and go stale.
+  // and go stale. Mirrored in an effect, not written during render: React can
+  // render this component more than once for a single commit (e.g. under
+  // Strict Mode, or a Compiler-memoized re-render), and mutating a ref as a
+  // render side effect makes that replay observable instead of invisible.
   const isOnlineRef = useRef<boolean | null>(isOnline);
-  isOnlineRef.current = isOnline;
+  useEffect(() => {
+    isOnlineRef.current = isOnline;
+  }, [isOnline]);
 
   const runRestore = useCallback(async (online: boolean) => {
     const outcome = await restoreSession(online);

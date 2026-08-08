@@ -1,4 +1,8 @@
-import type { NoticePriority, NoticeType } from '@/shared/components/status-badge';
+import type {
+  FeedbackStatus,
+  NoticePriority,
+  NoticeType,
+} from '@/shared/components/status-badge';
 
 /**
  * The shapes the consumer API actually returns.
@@ -46,6 +50,82 @@ export interface Notice {
   date: string;
   content: string;
   priority: NoticePriority;
+}
+
+export interface MailingAddress {
+  houseStreet: string | null;
+  barangay: string | null;
+  city: string | null;
+  province: string | null;
+  zip: string | null;
+}
+
+/**
+ * The consumer's record in the Admin Portal's registry, as GET /profile presents it.
+ *
+ * Everything here is displayed; only `contactNumber` and `mailingAddress` can be
+ * sent back. The rest is office-only — see the comment on the `contacts` /
+ * `mailingAddress` fields in app-backend/models/Consumer.js for why the identity
+ * and senior-citizen fields specifically must not be self-editable.
+ *
+ * Nearly every field is nullable because the portal's own records are uneven: a
+ * business consumer has `businessName` and no `firstName`, a self-registered
+ * consumer has neither, and plenty of rows carry no address at all. Null here means
+ * "the district holds nothing for this", which the UI states rather than hides.
+ */
+export interface ConsumerProfile {
+  consumerNo: string | null;
+  consumerType: 'individual' | 'business' | null;
+  name: string | null;
+  firstName: string | null;
+  middleName: string | null;
+  lastName: string | null;
+  businessName: string | null;
+  contactPersonName: string | null;
+  /** ISO 8601. */
+  birthDate: string | null;
+  validId: { idType: string | null; idNumber: string | null } | null;
+  isSeniorCitizen: boolean;
+  email: string | null;
+  contactNumber: string | null;
+  mailingAddress: MailingAddress | null;
+  accountNumbers: string[];
+  /** ISO 8601. */
+  memberSince: string | null;
+}
+
+/** Exactly what PATCH /profile accepts. Anything else the server ignores. */
+export interface ConsumerProfileEdit {
+  contactNumber?: string;
+  mailingAddress?: {
+    houseStreet: string;
+    barangay: string;
+    city: string;
+    province: string;
+    zip: string;
+  };
+}
+
+/** The four values POST /feedback accepts for `type`. */
+export type FeedbackType = 'billing' | 'service-quality' | 'system-issue' | 'other';
+
+export interface Feedback {
+  id: string;
+  type: FeedbackType;
+  subject: string;
+  message: string;
+  status: FeedbackStatus;
+  /** ISO 8601. */
+  submittedAt: string;
+  /**
+   * ISO 8601, or null while the record is untouched since submission.
+   *
+   * Null is not "unknown" — it is the positive fact that nothing has moved. See
+   * `present()` in app-backend/controllers/feedbackController.js: mongoose stamps
+   * `updatedAt` equal to `createdAt` on insert, so the server collapses that case
+   * to null rather than letting the app report a status change that never happened.
+   */
+  statusChangedAt: string | null;
 }
 
 /**

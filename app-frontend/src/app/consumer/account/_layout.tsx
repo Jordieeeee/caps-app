@@ -10,7 +10,9 @@ export default function ConsumerAccountLayout() {
   return (
     <Stack screenOptions={{ headerShown: true, headerBackTitle: 'Account' }}>
       <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="edit-details" options={{ title: 'Edit my details' }} />
       <Stack.Screen name="feedback" options={{ title: 'Send feedback' }} />
+      <Stack.Screen name="feedback-history" options={{ title: 'Your feedback' }} />
     </Stack>
   );
 }

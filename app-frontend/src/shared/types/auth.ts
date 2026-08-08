@@ -59,6 +59,11 @@ export const AuthErrorCode = {
   TOKEN_EXPIRED: 'TOKEN_EXPIRED',
   ROLE_NOT_PERMITTED: 'ROLE_NOT_PERMITTED',
 } as const;
+// The const-object-as-enum idiom: a value and a type sharing one name, in
+// TS's separate value/type namespaces. `@typescript-eslint/no-redeclare`'s
+// `ignoreDeclarationMerge` option doesn't cover this form (only
+// interface/namespace-style merges), so it's a real false positive here.
+// eslint-disable-next-line @typescript-eslint/no-redeclare
 export type AuthErrorCode = (typeof AuthErrorCode)[keyof typeof AuthErrorCode];
 
 /** Client-side failure kinds that never come from the server. */
@@ -69,6 +74,7 @@ export const ClientErrorCode = {
   ROLE_UNSUPPORTED: 'ROLE_UNSUPPORTED',
   UNKNOWN: 'UNKNOWN',
 } as const;
+// eslint-disable-next-line @typescript-eslint/no-redeclare -- see AuthErrorCode above
 export type ClientErrorCode = (typeof ClientErrorCode)[keyof typeof ClientErrorCode];
 
 export type ErrorCode = AuthErrorCode | ClientErrorCode;

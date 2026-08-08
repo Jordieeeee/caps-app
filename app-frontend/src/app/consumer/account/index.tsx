@@ -1,12 +1,19 @@
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MAX_ACCOUNTS } from '@/consumer/types';
-import { listAccounts, unlinkAccount, type Account } from '@/consumer/services/consumer-data';
-import { useAuth, useSession } from '@/shared/auth/auth-context';
+import {
+  getProfile,
+  listAccounts,
+  unlinkAccount,
+  type Account,
+  type ConsumerProfile,
+} from '@/consumer/services/consumer-data';
+import { formatDate } from '@/shared/format/date';
+import { useAuth } from '@/shared/auth/auth-context';
 import { Icon, type IconName } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
@@ -27,42 +34,84 @@ import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
  * did not deserve a tab of its own.
  */
 export default function ConsumerAccountScreen() {
-  // Bills are no longer fetched here. This screen used to pull the full bill list
-  // purely to filter it per account for the balance row; the server now sends
-  // `outstanding` on each account, so that request was a round trip whose result
-  // could not be used against real data anyway.
-  const load = useCallback(async () => ({ accounts: await listAccounts() }), []);
+  /**
+   * Two independent reads, settled independently.
+   *
+   * `Promise.all` was wrong here the moment this screen grew a second source: it
+   * rejects on the first failure, so a profile request that timed out would blank
+   * the linked-accounts list that had already arrived — and, before the
+   * restructure below, would have taken Sign out down with it. `allSettled` lets
+   * each section report its own outcome, which is also the truthful one.
+   *
+   * Bills are deliberately not fetched. This screen used to pull the full bill
+   * list purely to filter it per account for the balance row; the server now sends
+   * `outstanding` on each account, so that request was a round trip whose result
+   * could not be used against real data anyway.
+   */
+  const load = useCallback(async () => {
+    const [accounts, profile] = await Promise.allSettled([listAccounts(), getProfile()]);
+    return {
+      accounts: accounts.status === 'fulfilled' ? accounts.value : null,
+      profile: profile.status === 'fulfilled' ? profile.value : null,
+    };
+  }, []);
   const { state, reload } = useAsync(load);
 
+  // Editing details happens on a pushed screen, so the saved value has to be
+  // picked up on the way back rather than only on a manual pull.
+  useFocusEffect(
+    useCallback(() => {
+      reload();
+    }, [reload])
+  );
+
+  const data = state.status === 'ready' ? state.data : null;
+
   return (
-    <ScreenContainer>
-      <ScreenHeader title="Account" subtitle="Your linked water accounts and settings" />
+    <ScreenContainer onRefresh={reload} refreshing={false}>
+      <ScreenHeader title="Account" subtitle="Your details, water accounts and settings" />
 
       {state.status === 'loading' && (
         <ScreenSection>
-          <ListLoading label="Loading your accounts…" />
+          <ListLoading label="Loading your account…" />
         </ScreenSection>
       )}
 
-      {state.status === 'error' && (
-        <ScreenSection>
-          <ListError
-            title="Could not load your accounts"
-            body="We couldn't reach Tanauan City Water District just now. Check your connection and try again."
-            onRetry={reload}
-          />
-        </ScreenSection>
-      )}
+      {data && <DetailsSection profile={data.profile} onRetry={reload} />}
+      {data && <AccountsSection accounts={data.accounts} onChanged={reload} />}
 
-      {state.status === 'ready' && (
-        <AccountBody accounts={state.data.accounts} onChanged={reload} />
-      )}
+      {/* Rendered unconditionally, outside every data branch, on purpose.
+          Sign out used to live inside the body that only rendered once the
+          accounts request had succeeded — so the one state in which a consumer is
+          most likely to want out of the app (nothing loading, network unhappy) was
+          exactly the state that hid the button. Settings depend on the session,
+          not on any fetch, so they are not gated on one. */}
+      <SettingsSection />
     </ScreenContainer>
   );
 }
 
-function AccountBody({ accounts, onChanged }: { accounts: Account[]; onChanged: () => void }) {
+function AccountsSection({
+  accounts,
+  onChanged,
+}: {
+  accounts: Account[] | null;
+  onChanged: () => void;
+}) {
   const theme = useTwdTheme();
+
+  if (!accounts) {
+    return (
+      <ScreenSection>
+        <ListError
+          title="Could not load your accounts"
+          body="We couldn't reach Tanauan City Water District just now. Check your connection and try again."
+          onRetry={onChanged}
+        />
+      </ScreenSection>
+    );
+  }
+
   const canAdd = accounts.length < MAX_ACCOUNTS;
 
   return (
@@ -120,9 +169,139 @@ function AccountBody({ accounts, onChanged }: { accounts: Account[]; onChanged: 
           </>
         )}
       </ScreenSection>
-
-      <SettingsSection />
     </>
+  );
+}
+
+/**
+ * Everything the district holds about this consumer.
+ *
+ * Shown in full rather than summarised, because the point of the section is to let
+ * someone check it. A wrong barangay is why a bill never arrives and a misspelt
+ * surname is why the counter cannot find them, and until now neither was
+ * discoverable from the app at all — the profile card here was a name and an email,
+ * both of which the consumer already knew.
+ *
+ * Rows whose value the district does not hold say so ("Not on file") instead of
+ * being hidden. A missing row is indistinguishable from a row that scrolled past;
+ * an explicit blank is a prompt to go and get it filled in.
+ */
+function DetailsSection({
+  profile,
+  onRetry,
+}: {
+  profile: ConsumerProfile | null;
+  onRetry: () => void;
+}) {
+  const theme = useTwdTheme();
+  const router = useRouter();
+
+  if (!profile) {
+    return (
+      <ScreenSection>
+        <ListError
+          title="Could not load your details"
+          body="We couldn't reach Tanauan City Water District just now. Check your connection and try again."
+          onRetry={onRetry}
+        />
+      </ScreenSection>
+    );
+  }
+
+  const address = profile.mailingAddress;
+  const addressLine = address
+    ? [address.houseStreet, address.barangay, address.city, address.province, address.zip]
+        .filter(Boolean)
+        .join(', ')
+    : '';
+
+  return (
+    <ScreenSection gap={Spacing.three}>
+      <View style={styles.countRow}>
+        <ThemedText type="defaultBold">Your details</ThemedText>
+        {profile.consumerNo && (
+          <ThemedText type="small" themeColor="textSecondary">
+            {profile.consumerNo}
+          </ThemedText>
+        )}
+      </View>
+
+      <ThemedView type="backgroundElement" style={styles.card}>
+        <DetailRow label="Name" value={profile.name} />
+        {profile.consumerType === 'business' && (
+          <DetailRow label="Contact person" value={profile.contactPersonName} />
+        )}
+        <DetailRow label="Email" value={profile.email} />
+        <DetailRow label="Mobile number" value={profile.contactNumber} />
+        <DetailRow label="Mailing address" value={addressLine} />
+        {profile.consumerType !== 'business' && (
+          <DetailRow label="Date of birth" value={formatDate(profile.birthDate ?? undefined)} />
+        )}
+        <DetailRow
+          label="Valid ID"
+          value={
+            profile.validId?.idNumber
+              ? `${profile.validId.idType ?? 'ID'} · ${profile.validId.idNumber}`
+              : ''
+          }
+        />
+        {/* Shown because it changes what the consumer pays — a senior citizen is
+            entitled to a statutory discount, so someone who qualifies and is
+            recorded as "No" needs to see that and bring their ID to the office. */}
+        <DetailRow label="Senior citizen" value={profile.isSeniorCitizen ? 'Yes' : 'No'} />
+        <DetailRow
+          label="Customer since"
+          value={formatDate(profile.memberSince ?? undefined)}
+          last
+        />
+      </ThemedView>
+
+      <TwdButton
+        label="Edit my details"
+        icon="plus"
+        variant="secondary"
+        onPress={() => router.push('/consumer/account/edit-details')}
+        accessibilityHint="Change your mobile number or mailing address"
+      />
+
+      <View
+        style={[styles.limitNote, { borderColor: theme.border }]}
+        accessible
+        accessibilityRole="summary">
+        <Icon name="info" size={20} color={theme.textSecondary} />
+        <ThemedText type="small" themeColor="textSecondary" style={styles.limitText}>
+          You can change your mobile number and mailing address here. Your name, date of
+          birth, valid ID and senior citizen status are changed at the TWD office, with
+          the supporting document.
+        </ThemedText>
+      </View>
+    </ScreenSection>
+  );
+}
+
+function DetailRow({
+  label,
+  value,
+  last,
+}: {
+  label: string;
+  value: string | null | undefined;
+  last?: boolean;
+}) {
+  const theme = useTwdTheme();
+  const known = !!value;
+
+  return (
+    <View style={[styles.detailRow, last ? null : { borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
+      <ThemedText type="small" themeColor="textSecondary" style={styles.detailLabel}>
+        {label}
+      </ThemedText>
+      <ThemedText
+        type={known ? 'defaultBold' : 'small'}
+        style={[styles.detailValue, known ? null : { color: theme.textSecondary }]}>
+        {known ? value : 'Not on file'}
+      </ThemedText>
+    </View>
   );
 }
 
@@ -256,7 +435,6 @@ function AccountCard({ account, onUnlinked }: { account: Account; onUnlinked: ()
 
 function SettingsSection() {
   const { signOut } = useAuth();
-  const { session } = useSession();
   const router = useRouter();
 
   /**
@@ -276,20 +454,28 @@ function SettingsSection() {
     ]);
   };
 
+  // The name/email card that used to sit here is gone: DetailsSection above shows
+  // both, sourced from the district's registry rather than from the cached
+  // session, and two copies of a name is how they end up disagreeing after an edit.
   return (
     <ScreenSection gap={Spacing.three}>
-      <View style={styles.profileCard}>
-        <ThemedText type="defaultBold">{session.user.name}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {session.user.email}
-        </ThemedText>
-      </View>
-
       <NavRow
         icon="message-square"
         label="Send feedback"
         detail="Report an issue"
         onPress={() => router.push('/consumer/account/feedback')}
+      />
+
+      {/* Sits directly under Send feedback, in that order, because the pair reads
+          as one thing a consumer does and then checks on. Kept as its own row
+          rather than a tab inside the form: the form is a task with a keyboard and
+          an unsaved draft, and putting a navigation control inside it invites
+          someone to lose a half-typed message by tapping across. */}
+      <NavRow
+        icon="inbox"
+        label="Your feedback"
+        detail="See what you've sent and its status"
+        onPress={() => router.push('/consumer/account/feedback-history')}
       />
 
       <TwdButton
@@ -393,7 +579,23 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   limitText: { flex: 1 },
-  profileCard: { gap: Spacing.one },
+  /**
+   * Label and value share a row and both may wrap.
+   *
+   * `flex: 1` on the value is what keeps a long mailing address inside the card:
+   * without it the value reports its full unwrapped width as the row's intrinsic
+   * width, which propagates up and pushes the card past the viewport — the same
+   * defect already documented on `detailValue` in collector/service-reports.tsx.
+   */
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  detailLabel: { flexShrink: 0 },
+  detailValue: { flex: 1, textAlign: 'right' },
   navRow: {
     flexDirection: 'row',
     alignItems: 'center',

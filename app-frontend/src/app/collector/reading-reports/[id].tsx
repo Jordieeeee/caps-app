@@ -17,7 +17,9 @@ import { ReadingStateBadge } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
 import { TwdTextField } from '@/shared/components/twd-text-field';
 import { formatPeso } from '@/shared/format/currency';
+import { downloadReceipt } from '@/collector/services/document-service';
 import { useAsync } from '@/shared/hooks/use-async';
+import { useDownload } from '@/shared/hooks/use-download';
 import { usePrint } from '@/shared/hooks/use-print';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { Radius, Spacing } from '@/shared/theme/twd';
@@ -54,7 +56,7 @@ export default function MeterReadingScreen() {
   const { state, reload } = useAsync(useCallback(() => RouteAccountService.get(id), [id]));
 
   return (
-    <ScreenContainer variant="stack">
+    <ScreenContainer variant="stack" onRefresh={reload} refreshing={false}>
       {state.status === 'loading' && (
         <ScreenSection>
           <SkeletonList count={2} label="Loading account" />
@@ -90,6 +92,7 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
   const theme = useTwdTheme();
   const { session } = useSession();
   const { print, printing, canPrint, printBlockedReason } = usePrint();
+  const { download, downloading, canDownload, downloadBlockedReason } = useDownload();
 
   // Prefilled when the meter has already been read today, so re-opening an account
   // is a correction rather than a blank slate the collector has to retype.
@@ -185,7 +188,30 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
     router.back();
   }, [save, router]);
 
-  const busy = saving || printing;
+  /**
+   * Save, then hand over a PDF instead of paper.
+   *
+   * Same save-first invariant as `saveAndPrint`, for the same reason — the
+   * document is the disposable half of the transaction and the reading is not.
+   *
+   * This is the path when the PT-210 is unavailable, which in the field is
+   * routine rather than exceptional: flat battery, no paper, or simply never
+   * paired. Before this, that collector could record the reading and hand the
+   * consumer nothing at all.
+   *
+   * Deliberately does NOT `router.back()` on completion. Printing ends the
+   * interaction — paper exists, the collector walks on — but a share sheet can be
+   * dismissed, sent to the wrong app, or cancelled, and navigating away
+   * underneath it would leave the collector unsure whether anything was produced.
+   * They leave this screen when they decide they are done with it.
+   */
+  const saveAndDownload = useCallback(async () => {
+    const invoice = await save();
+    if (!invoice) return;
+    await download(() => downloadReceipt(invoice, account));
+  }, [save, download, account]);
+
+  const busy = saving || printing || downloading;
 
   return (
     <>
@@ -302,7 +328,33 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
           <View style={styles.hint}>
             <Icon name="bluetooth" size={14} color={theme.textSecondary} />
             <ThemedText type="small" themeColor="textSecondary">
-              {printBlockedReason} — connect it in More, or save without printing.
+              {printBlockedReason} — connect it in More, or send the receipt as a PDF below.
+            </ThemedText>
+          </View>
+        )}
+
+        {/* The fallback that makes a missing printer survivable: the consumer
+            still leaves with a receipt, just on their phone instead of on paper.
+            Same document either way — see document-service.ts. */}
+        <TwdButton
+          label="Save & Send Receipt (PDF)"
+          icon="file-text"
+          variant="secondary"
+          busy={downloading}
+          busyLabel="Preparing…"
+          disabled={!valid || canDownload === false || busy}
+          onPress={() => void saveAndDownload()}
+          accessibilityHint={
+            downloadBlockedReason ??
+            'Saves the reading and shares the receipt as a PDF'
+          }
+        />
+
+        {downloadBlockedReason && (
+          <View style={styles.hint}>
+            <Icon name="info" size={14} color={theme.textSecondary} />
+            <ThemedText type="small" themeColor="textSecondary">
+              {downloadBlockedReason}
             </ThemedText>
           </View>
         )}

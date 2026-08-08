@@ -17,9 +17,17 @@ import { SyncBadge } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
 import { formatPeso } from '@/shared/format/currency';
 import { useAsync } from '@/shared/hooks/use-async';
+import { useDownload } from '@/shared/hooks/use-download';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
-import { calculateBill } from '@/shared/utils/billing-calculator';
+import {
+  billingPeriodFor,
+  calculateBill,
+  dueDateFor,
+  invoiceNumberFor,
+  type RouteAccount,
+} from '@/shared/utils/billing-calculator';
+import { downloadDailyReport, downloadReceipt } from '@/collector/services/document-service';
 
 /**
  * Daily Summary — what this collector has read today, and getting it to the office.
@@ -49,12 +57,28 @@ interface ReadingRow {
   amountDue: number;
   synced: boolean;
   timestamp: number;
+  /**
+   * Everything the receipt needs, carried on the row.
+   *
+   * A softcopy re-issued from this screen has to reproduce the *original*
+   * invoice, not a fresh one: `formatReceiptLines` needs the two meter figures
+   * and the reading date to derive the invoice number, billing period and due
+   * date. Recomputing any of them from "today" would hand the consumer a
+   * different invoice number for the same reading.
+   */
+  previousReading: number;
+  currentReading: number;
+  readingDate: string;
+  /** Null when the reading has outlived its route cache — see `consumerName`. */
+  account: RouteAccount | null;
 }
 
 interface DailySummary {
   rows: ReadingRow[];
   accountsRead: number;
   totalOnRoute: number;
+  /** The date these rows are for, `YYYY-MM-DD`. Stamped on the report. */
+  date: string;
 }
 
 async function loadDailySummary(): Promise<DailySummary> {
@@ -64,22 +88,29 @@ async function loadDailySummary(): Promise<DailySummary> {
   ]);
 
   const today = new Date().toISOString().split('T')[0];
-  const nameFor = new Map(accounts.map((a) => [a.accountNumber, a.consumerName]));
+  const accountFor = new Map(accounts.map((a) => [a.accountNumber, a]));
   const todays = readings.filter((r) => r.readingDate === today);
 
   const rows: ReadingRow[] = todays
-    .map((r) => ({
-      id: r.id,
-      accountNumber: r.accountNumber,
-      // Falls back to the account number rather than "Unknown": a reading can
-      // outlive its route cache, and the number is still the thing the office
-      // looks the consumer up by.
-      consumerName: nameFor.get(r.accountNumber) ?? r.accountNumber,
-      consumption: r.consumption,
-      amountDue: calculateBill(r.consumption).totalAmountDue,
-      synced: r.synced,
-      timestamp: r.timestamp,
-    }))
+    .map((r) => {
+      const account = accountFor.get(r.accountNumber) ?? null;
+      return {
+        id: r.id,
+        accountNumber: r.accountNumber,
+        // Falls back to the account number rather than "Unknown": a reading can
+        // outlive its route cache, and the number is still the thing the office
+        // looks the consumer up by.
+        consumerName: account?.consumerName ?? r.accountNumber,
+        consumption: r.consumption,
+        amountDue: calculateBill(r.consumption).totalAmountDue,
+        synced: r.synced,
+        timestamp: r.timestamp,
+        previousReading: r.previousReading,
+        currentReading: r.currentReading,
+        readingDate: r.readingDate,
+        account,
+      };
+    })
     // Most recent first — the collector is checking the meter they just left.
     .sort((a, b) => b.timestamp - a.timestamp);
 
@@ -90,14 +121,16 @@ async function loadDailySummary(): Promise<DailySummary> {
     // accounts.
     accountsRead: new Set(todays.map((r) => r.accountNumber)).size,
     totalOnRoute: accounts.length,
+    date: today,
   };
 }
 
 type Notice = { tone: 'success' | 'danger'; text: string };
 
 export default function DailySummaryScreen() {
-  const { sync } = useSession();
+  const { sync, session } = useSession();
   const theme = useTwdTheme();
+  const { download, downloading, canDownload, downloadBlockedReason } = useDownload();
 
   const { state, reload } = useAsync(useCallback(() => loadDailySummary(), []));
   const [submitting, setSubmitting] = useState(false);
@@ -145,6 +178,68 @@ export default function DailySummaryScreen() {
    * The failed set is deliberately not persisted — see the `failed` descriptor in
    * status-badge for why a red chip cannot survive a restart honestly.
    */
+  /**
+   * Re-issue one consumer's receipt as a PDF.
+   *
+   * The invoice is rebuilt from the stored reading, not recomputed against today:
+   * `invoiceNumberFor`, `dueDateFor` and `billingPeriodFor` all key off the
+   * reading date, so using the current date would produce a second, different
+   * invoice number for a bill the consumer has already been handed on paper.
+   *
+   * Needs the route account for the consumer's name, address, meter number and
+   * rate class — all of which the receipt prints and none of which the reading
+   * record itself carries. A row whose account has aged out of the route cache
+   * therefore cannot produce a faithful receipt, and the control is hidden for it
+   * rather than emitting one with blanks where the consumer's address should be.
+   */
+  const downloadRowReceipt = useCallback(
+    (row: ReadingRow) => {
+      const account = row.account;
+      if (!account) return;
+
+      void download(() =>
+        downloadReceipt(
+          {
+            invoiceNo: invoiceNumberFor(row.accountNumber, row.readingDate),
+            date: row.readingDate,
+            dueDate: dueDateFor(row.readingDate),
+            billingPeriod: billingPeriodFor(row.readingDate),
+            previousReading: row.previousReading,
+            currentReading: row.currentReading,
+            consumption: row.consumption,
+            bill: calculateBill(row.consumption),
+            collectorName: session.user.name,
+            printedAt: row.timestamp,
+          },
+          account
+        )
+      );
+    },
+    [download, session]
+  );
+
+  const downloadReport = useCallback(() => {
+    if (!summary) return;
+
+    void download(() =>
+      downloadDailyReport({
+        collectorName: session.user.name,
+        routeIds: session.user.routeIds ?? [],
+        date: summary.date,
+        rows: rows.map((r) => ({
+          accountNumber: r.accountNumber,
+          consumerName: r.consumerName,
+          consumption: r.consumption,
+          amountDue: r.amountDue,
+          synced: r.synced,
+        })),
+        accountsRead: summary.accountsRead,
+        totalOnRoute: summary.totalOnRoute,
+        generatedAt: Date.now(),
+      })
+    );
+  }, [download, session, summary, rows]);
+
   const submit = useCallback(async () => {
     const attempted = rows.filter((r) => !r.synced).map((r) => r.id);
     if (!attempted.length) return;
@@ -278,6 +373,11 @@ export default function DailySummaryScreen() {
             failed={!row.synced && failedIds.has(row.id)}
             busy={submitting}
             onRetry={() => void submit()}
+            // `canDownload` is null while the capability probe runs; treat only an
+            // explicit false as unavailable so the control isn't missing on first
+            // paint and then appearing under the collector's thumb.
+            canDownload={canDownload !== false && !downloading}
+            onDownloadReceipt={() => downloadRowReceipt(row)}
           />
         ))}
 
@@ -320,6 +420,32 @@ export default function DailySummaryScreen() {
               {disabledReason === 'No connection'
                 ? 'No connection — your readings are safe on this phone and will send themselves when you get signal.'
                 : 'No pending records — everything read today is already with TWD.'}
+            </ThemedText>
+          </View>
+        )}
+
+        {/* Secondary to Submit, deliberately. Submitting is the shift's actual
+            obligation; a PDF is a copy of it. Giving the two equal weight would
+            let "I downloaded the report" feel like the day was filed. */}
+        <TwdButton
+          label="Download report (PDF)"
+          icon="file-text"
+          variant="secondary"
+          busy={downloading}
+          busyLabel="Preparing…"
+          disabled={rows.length === 0 || canDownload === false || downloading}
+          onPress={downloadReport}
+          accessibilityHint={
+            downloadBlockedReason ??
+            "Saves today's readings as a PDF you can send or keep"
+          }
+        />
+
+        {(downloadBlockedReason || rows.length === 0) && (
+          <View style={styles.hint}>
+            <Icon name="info" size={14} color={theme.textSecondary} />
+            <ThemedText type="small" themeColor="textSecondary">
+              {downloadBlockedReason ?? 'Nothing to report yet — read a meter first.'}
             </ThemedText>
           </View>
         )}
@@ -398,13 +524,28 @@ function ReadingCard({
   failed,
   busy,
   onRetry,
+  canDownload,
+  onDownloadReceipt,
 }: {
   row: ReadingRow;
   failed: boolean;
   busy: boolean;
   onRetry: () => void;
+  canDownload: boolean;
+  onDownloadReceipt: () => void;
 }) {
   const theme = useTwdTheme();
+
+  /**
+   * No account in the route cache means no faithful receipt.
+   *
+   * The reading record carries the meter figures but not the consumer's address,
+   * meter number or rate class, all of which the receipt prints. Rather than
+   * issue a document with blanks where the consumer's own details belong, the
+   * control is simply absent for such a row — the reading itself still shows, and
+   * still syncs.
+   */
+  const receiptAvailable = row.account !== null;
 
   return (
     <ThemedView
@@ -419,6 +560,27 @@ function ReadingCard({
             {row.consumerName}
           </ThemedText>
         </View>
+
+        {receiptAvailable && (
+          <Pressable
+            onPress={onDownloadReceipt}
+            disabled={!canDownload}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel={`Download the receipt for ${row.consumerName}`}
+            accessibilityState={{ disabled: !canDownload }}
+            style={({ pressed }) => [
+              styles.receiptIcon,
+              {
+                borderColor: theme.border,
+                backgroundColor: pressed ? theme.backgroundSelected : 'transparent',
+                opacity: canDownload ? 1 : 0.5,
+              },
+            ]}>
+            <Icon name="file-text" size={18} color={theme.primary} />
+          </Pressable>
+        )}
+
         <SyncBadge status={row.synced ? 'synced' : failed ? 'failed' : 'pending'} />
       </View>
 
@@ -520,6 +682,16 @@ const styles = StyleSheet.create({
   readingItem: { gap: Spacing.half },
   retryIcon: {
     marginLeft: 'auto',
+    width: MIN_TAP_TARGET,
+    height: MIN_TAP_TARGET,
+    borderRadius: Radius.field,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Same silhouette as retryIcon so the two read as one family of row actions,
+  // but neutral-bordered: re-issuing a receipt is routine, not a recovery step.
+  receiptIcon: {
     width: MIN_TAP_TARGET,
     height: MIN_TAP_TARGET,
     borderRadius: Radius.field,

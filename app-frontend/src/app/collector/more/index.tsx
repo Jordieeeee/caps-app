@@ -36,8 +36,13 @@ export default function CollectorMore() {
   // a spurious warning is a silent sign-out that drops a shift's work.
   const claim: SyncClaim | null = state.status === 'ready' ? syncClaim(state.data) : null;
 
+  // `variant="stack"`, not the default `tab`. more/_layout.tsx sets
+  // `headerShown: true` for this screen, so the navigation header has already
+  // absorbed the top safe area. The default variant adds `safeArea.top` again as
+  // content padding, counting the notch twice — ~83pt of dead space under the
+  // header divider on a Dynamic Island device (59 absorbed + 59 re-added + 24).
   return (
-    <ScreenContainer>
+    <ScreenContainer variant="stack" onRefresh={reload} refreshing={false}>
       <ScreenHeader
         title={session.user.name}
         subtitle={`Collector · ${session.user.routeIds?.join(', ') || 'No routes assigned'}`}

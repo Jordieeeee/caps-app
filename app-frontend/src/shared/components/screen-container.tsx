@@ -68,6 +68,36 @@ export function ScreenContainer({
     <ScrollView
       style={[styles.scrollView, { backgroundColor: theme.background }]}
       contentContainerStyle={[styles.contentContainer, insets]}
+      /**
+       * Without this, a form inside this shell has a submit button that does
+       * nothing on the first tap.
+       *
+       * `keyboardShouldPersistTaps` defaults to 'never', which means a tap landing
+       * anywhere outside the focused input is swallowed to dismiss the keyboard and
+       * is never delivered to the child. On the Send feedback screen — the only form
+       * that renders inside this container — that is the entire bug: the consumer
+       * finishes typing their message, taps "Send feedback" with the keyboard still
+       * up, the keyboard closes, and nothing is sent. It reads as a dead button, and
+       * the second tap (if they try again) is the one that actually submits.
+       *
+       * 'handled' delivers the tap to any child that handles it, while taps on inert
+       * background still dismiss the keyboard. login-screen and enroll-screen already
+       * set this on their own ScrollViews; the shell did not, so every screen built
+       * on it inherited the broken behaviour.
+       */
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      /**
+       * Keeps the keyboard from covering whatever is being typed into — on the
+       * feedback form the multiline Message field sits directly above the submit
+       * button, so an unadjusted ScrollView hides both behind the keyboard.
+       *
+       * A ScrollView content-inset adjustment rather than wrapping this shell in a
+       * KeyboardAvoidingView: these screens render inside a tab navigator, and
+       * KeyboardAvoidingView's `padding` behaviour double-counts the tab bar height
+       * there. iOS-only prop; on Android the manifest's adjustResize already does it.
+       */
+      automaticallyAdjustKeyboardInsets
       refreshControl={
         onRefresh ? (
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={twd.primary} />

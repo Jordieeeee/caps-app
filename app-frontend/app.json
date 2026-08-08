@@ -11,7 +11,6 @@
       "EXPO_PUBLIC_API_BASE_URL": "http://localhost:5001/api"
     },
     "ios": {
-      "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.anonymous.app-frontend"
     },
     "android": {
@@ -21,7 +20,8 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.appfrontend"
     },
     "web": {
       "output": "static",
@@ -37,7 +37,8 @@
           "imageWidth": 76
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,

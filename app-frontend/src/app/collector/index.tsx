@@ -38,7 +38,7 @@ export default function CollectorHome() {
   const routes = session.user.routeIds ?? [];
 
   return (
-    <ScreenContainer>
+    <ScreenContainer onRefresh={reload} refreshing={false}>
       <ScreenHeader title={firstName(session.user.name)} subtitle={greeting()} />
 
       <ScreenSection gap={Spacing.three}>

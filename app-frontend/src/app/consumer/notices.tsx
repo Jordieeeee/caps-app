@@ -6,6 +6,7 @@ import { ThemedView } from '@/components/themed-view';
 import { listNotices, type Notice } from '@/consumer/services/consumer-data';
 import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
+import { RefreshButton, RefreshFailedNotice } from '@/shared/components/refresh-button';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { NoticeBadge, noticeTone, useToneColor } from '@/shared/components/status-badge';
@@ -24,11 +25,22 @@ const ORDER: Record<Notice['priority'], number> = { high: 0, medium: 1, low: 2 }
  * other's UI. See consumer-tabs.tsx for why "Notices" won.
  */
 export default function ConsumerNoticesScreen() {
-  const { state, reload } = useAsync(useCallback(() => listNotices(), []));
+  const { state, reload, refresh, refreshing, refreshFailed } = useAsync(
+    useCallback(() => listNotices(), [])
+  );
 
   return (
-    <ScreenContainer>
-      <ScreenHeader title="Notices" subtitle="Service updates from Tanauan City Water District" />
+    <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
+      <ScreenHeader
+        title="Notices"
+        subtitle="Service updates from Tanauan City Water District"
+        action={
+          <RefreshButton onPress={() => void refresh()} busy={refreshing} subject="notices" />
+        }
+      />
+
+      {/* See bills/index.tsx — only meaningful next to rows we are still showing. */}
+      {state.status === 'ready' && refreshFailed && <RefreshFailedNotice subject="notices" />}
 
       {state.status === 'loading' && (
         <ScreenSection>

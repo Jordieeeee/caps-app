@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
@@ -142,6 +143,13 @@ export function LoginScreen() {
             keyboardDismissMode="on-drag">
             <View style={styles.content}>
               <View style={styles.header}>
+                <Image
+                  source={require('@/assets/images/icon.png')}
+                  style={styles.logo}
+                  contentFit="contain"
+                  accessibilityIgnoresInvertColors
+                  accessibilityLabel="Tanauan City Water District seal"
+                />
                 <ThemedText type="subtitle" style={styles.centered}>
                   Tanauan City{'\n'}Water District
                 </ThemedText>
@@ -349,6 +357,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.two,
     marginBottom: Spacing.two,
+  },
+  logo: {
+    width: 96,
+    height: 96,
   },
   centered: { textAlign: 'center' },
   form: { gap: Spacing.three },

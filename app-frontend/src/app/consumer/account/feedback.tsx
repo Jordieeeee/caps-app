@@ -3,48 +3,14 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { FEEDBACK_OPTIONS } from '@/consumer/feedback-options';
 import { submitFeedback, type FeedbackType } from '@/consumer/services/consumer-data';
 import { useTheme } from '@/hooks/use-theme';
-import { Icon, type IconName } from '@/shared/components/icon';
+import { Icon } from '@/shared/components/icon';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { TwdButton } from '@/shared/components/twd-button';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
-
-interface Option {
-  id: FeedbackType;
-  title: string;
-  description: string;
-  icon: IconName;
-}
-
-/** Icons match the backend's `type` enum exactly — these four values are the API. */
-const OPTIONS: Option[] = [
-  {
-    id: 'billing',
-    title: 'Billing concern',
-    description: 'Charges, payments, or something wrong on your statement',
-    icon: 'banknote',
-  },
-  {
-    id: 'service-quality',
-    title: 'Service quality',
-    description: 'Water quality, pressure, or interruptions',
-    icon: 'gauge',
-  },
-  {
-    id: 'system-issue',
-    title: 'App problem',
-    description: 'Something in this app is broken or confusing',
-    icon: 'alert-triangle',
-  },
-  {
-    id: 'other',
-    title: 'Something else',
-    description: 'Anything not covered above',
-    icon: 'message-square',
-  },
-];
 
 type Status = 'editing' | 'sending' | 'sent';
 
@@ -116,6 +82,15 @@ export default function ConsumerFeedbackScreen() {
             </ThemedText>
           </View>
           <TwdButton label="Done" onPress={() => router.back()} />
+          {/* `replace`, not `push`: the form has done its job, and leaving it on the
+              stack means backing out of the history lands on a spent success card
+              offering to send the message again. */}
+          <TwdButton
+            label="View your feedback"
+            variant="secondary"
+            onPress={() => router.replace('/consumer/account/feedback-history')}
+            accessibilityHint="Shows everything you have sent TWD and its status"
+          />
           <TwdButton
             label="Send another"
             variant="secondary"
@@ -139,7 +114,7 @@ export default function ConsumerFeedbackScreen() {
         <ThemedText type="defaultBold">What is this about?</ThemedText>
 
         <View style={styles.options}>
-          {OPTIONS.map((option) => {
+          {FEEDBACK_OPTIONS.map((option) => {
             const selected = type === option.id;
             return (
               <Pressable

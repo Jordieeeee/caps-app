@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -6,6 +7,16 @@ import { Spacing } from '@/shared/theme/twd';
 interface ScreenHeaderProps {
   title: string;
   subtitle?: string;
+  /**
+   * A single control on the title's own row, trailing edge — a refresh button,
+   * typically.
+   *
+   * It shares the title row rather than getting one of its own precisely because
+   * of the note below: a header earns no vertical space of its own, so an action
+   * placed here costs nothing, while the same button on a new line would push the
+   * screen's actual content further down on every one of these screens.
+   */
+  action?: ReactNode;
 }
 
 /**
@@ -27,12 +38,15 @@ interface ScreenHeaderProps {
  * navigation header instead — giving them this header as well would print the
  * screen's name twice.
  */
-export function ScreenHeader({ title, subtitle }: ScreenHeaderProps) {
+export function ScreenHeader({ title, subtitle, action }: ScreenHeaderProps) {
   return (
     <View style={styles.header}>
-      <ThemedText style={styles.title} accessibilityRole="header">
-        {title}
-      </ThemedText>
+      <View style={styles.titleRow}>
+        <ThemedText style={styles.title} accessibilityRole="header">
+          {title}
+        </ThemedText>
+        {action}
+      </View>
       {subtitle ? (
         <ThemedText type="small" themeColor="textSecondary">
           {subtitle}
@@ -48,8 +62,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.four,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
   // fontSize and lineHeight declared together — the pair never inherits apart.
   title: {
+    // Takes the slack so the action pins to the trailing edge, and so a long title
+    // wraps inside its own column instead of pushing the button off-screen.
+    flex: 1,
     fontSize: 26,
     lineHeight: 32,
     fontWeight: '700',

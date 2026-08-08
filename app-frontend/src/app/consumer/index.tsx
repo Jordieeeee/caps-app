@@ -51,7 +51,7 @@ export default function ConsumerHome() {
   const { state, reload } = useAsync(load);
 
   return (
-    <ScreenContainer>
+    <ScreenContainer onRefresh={reload} refreshing={false}>
       <ScreenHeader title={firstName(session.user.name)} subtitle={greeting()} />
 
       {state.status === 'loading' && (

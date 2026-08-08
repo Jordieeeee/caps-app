@@ -1,14 +1,12 @@
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth } from '@/constants/theme';
 import { PrinterService } from '@/collector/services/printer-service';
 import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListLoading } from '@/shared/components/list-states';
+import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { TwdButton } from '@/shared/components/twd-button';
-import { useStackContentInsets } from '@/shared/hooks/use-content-insets';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
 
@@ -33,7 +31,6 @@ interface FoundPrinter {
  */
 export default function PrinterScreen() {
   const theme = useTwdTheme();
-  const insets = useStackContentInsets();
 
   const [connected, setConnected] = useState(PrinterService.isConnected());
   const [connectedName, setConnectedName] = useState<string | null>(null);
@@ -89,101 +86,116 @@ export default function PrinterScreen() {
     }
   }, []);
 
+  /**
+   * On the shared shell, like every other screen.
+   *
+   * This previously hand-rolled its own `ScrollView` and applied
+   * `useStackContentInsets()` on top of a local `paddingHorizontal: Spacing.four`:
+   *
+   *     contentContainerStyle={[styles.scroll, insets]}
+   *     // styles.scroll → paddingHorizontal: 24
+   *     // insets        → paddingLeft: safeArea.left, paddingRight: safeArea.right
+   *
+   * Yoga resolves the edge-specific `paddingLeft`/`paddingRight` ahead of the
+   * `paddingHorizontal` shorthand no matter which order the array puts them in, and
+   * both of those are 0 in portrait — so the intended 24pt gutter was silently
+   * dropped and the status card and Search button sat flush against the display
+   * edges while every other screen inset by 24. ScreenSection owns the gutter now,
+   * and there is no second source to lose to.
+   */
   return (
-    <ThemedView style={styles.root}>
-      <ScrollView contentContainerStyle={[styles.scroll, insets]}>
-        <View style={styles.content}>
-          <View
-            style={[
-              styles.statusCard,
-              connected
-                ? { borderColor: theme.success, backgroundColor: theme.backgroundElement }
-                : { borderColor: theme.border, backgroundColor: theme.backgroundElement },
-            ]}
-            accessible
-            accessibilityRole="summary">
-            <Icon
-              name={connected ? 'check' : 'bluetooth'}
-              size={24}
-              color={connected ? theme.success : theme.textSecondary}
-            />
-            <View style={styles.statusText}>
-              <ThemedText type="defaultBold">
-                {connected ? `Connected${connectedName ? ` to ${connectedName}` : ''}` : 'No printer connected'}
-              </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {connected
-                  ? 'Receipts and reports will print to this printer.'
-                  : 'Switch the PT-210 on, then search for it below.'}
-              </ThemedText>
-            </View>
+    <ScreenContainer variant="stack">
+      <ScreenSection gap={Spacing.four}>
+        <View
+          style={[
+            styles.statusCard,
+            connected
+              ? { borderColor: theme.success, backgroundColor: theme.backgroundElement }
+              : { borderColor: theme.border, backgroundColor: theme.backgroundElement },
+          ]}
+          accessible
+          accessibilityRole="summary">
+          <Icon
+            name={connected ? 'check' : 'bluetooth'}
+            size={24}
+            color={connected ? theme.success : theme.textSecondary}
+          />
+          <View style={styles.statusText}>
+            <ThemedText type="defaultBold">
+              {connected ? `Connected${connectedName ? ` to ${connectedName}` : ''}` : 'No printer connected'}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {connected
+                ? 'Receipts and reports will print to this printer.'
+                : 'Switch the PT-210 on, then search for it below.'}
+            </ThemedText>
           </View>
-
-          {connected ? (
-            <TwdButton label="Disconnect" variant="danger" onPress={() => void disconnect()} />
-          ) : (
-            <TwdButton
-              label="Search for printers"
-              icon="bluetooth"
-              busy={scanning}
-              busyLabel="Searching…"
-              onPress={() => void scan()}
-            />
-          )}
-
-          {!connected && scanning && <ListLoading label="Searching for nearby printers…" />}
-
-          {!connected && !scanning && hasScanned && found.length === 0 && (
-            <ListEmpty
-              icon="printer"
-              title="No printers found"
-              body="Check that the PT-210 is switched on and within a few metres, then search again."
-              action={{ label: 'Search again', onPress: () => void scan() }}
-            />
-          )}
-
-          {!connected && found.length > 0 && (
-            <View style={styles.results}>
-              <ThemedText type="defaultBold">Printers found</ThemedText>
-              {found.map((printer) => (
-                <Pressable
-                  key={printer.id}
-                  onPress={() => void connect(printer)}
-                  disabled={connectingId !== null}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Connect to ${printer.name}`}
-                  accessibilityState={{ disabled: connectingId !== null, busy: connectingId === printer.id }}
-                  style={({ pressed }) => [
-                    styles.printerRow,
-                    {
-                      borderColor: theme.border,
-                      backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
-                    },
-                  ]}>
-                  <Icon name="printer" size={22} color={theme.textSecondary} />
-                  <View style={styles.printerText}>
-                    <ThemedText type="defaultBold">{printer.name}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                      {printer.id}
-                    </ThemedText>
-                  </View>
-                  <ThemedText type="smallBold" style={{ color: theme.primary }}>
-                    {connectingId === printer.id ? 'Connecting…' : 'Connect'}
-                  </ThemedText>
-                </Pressable>
-              ))}
-            </View>
-          )}
         </View>
-      </ScrollView>
-    </ThemedView>
+
+        {connected ? (
+          <TwdButton label="Disconnect" variant="danger" onPress={() => void disconnect()} />
+        ) : (
+          <TwdButton
+            label="Search for printers"
+            icon="bluetooth"
+            busy={scanning}
+            busyLabel="Searching…"
+            onPress={() => void scan()}
+          />
+        )}
+
+        {!connected && scanning && <ListLoading label="Searching for nearby printers…" />}
+
+        {!connected && !scanning && hasScanned && found.length === 0 && (
+          <ListEmpty
+            icon="printer"
+            title="No printers found"
+            body="Check that the PT-210 is switched on and within a few metres, then search again."
+            action={{ label: 'Search again', onPress: () => void scan() }}
+          />
+        )}
+
+        {!connected && found.length > 0 && (
+          <View style={styles.results}>
+            <ThemedText type="defaultBold">Printers found</ThemedText>
+            {found.map((printer) => (
+              <Pressable
+                key={printer.id}
+                onPress={() => void connect(printer)}
+                disabled={connectingId !== null}
+                accessibilityRole="button"
+                accessibilityLabel={`Connect to ${printer.name}`}
+                accessibilityState={{ disabled: connectingId !== null, busy: connectingId === printer.id }}
+                style={({ pressed }) => [
+                  styles.printerRow,
+                  {
+                    borderColor: theme.border,
+                    backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
+                  },
+                ]}>
+                <Icon name="printer" size={22} color={theme.textSecondary} />
+                <View style={styles.printerText}>
+                  <ThemedText type="defaultBold">{printer.name}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                    {printer.id}
+                  </ThemedText>
+                </View>
+                <ThemedText type="smallBold" style={{ color: theme.primary }}>
+                  {connectingId === printer.id ? 'Connecting…' : 'Connect'}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </ScreenSection>
+    </ScreenContainer>
   );
 }
 
+// Layout styles are gone: `root`, `scroll` and `content` reimplemented what
+// ScreenContainer/ScreenSection already provide (flex, centring, max width,
+// gutter, insets). Only the screen's own component styling remains.
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  scroll: { flexGrow: 1, alignItems: 'center', paddingHorizontal: Spacing.four },
-  content: { width: '100%', maxWidth: MaxContentWidth, gap: Spacing.four },
   statusCard: {
     flexDirection: 'row',
     alignItems: 'center',

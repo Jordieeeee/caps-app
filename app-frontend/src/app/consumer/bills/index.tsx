@@ -9,6 +9,7 @@ import { dueLabel, daysUntil, summarise } from '@/consumer/lib/bill-summary';
 import { FilterChips } from '@/shared/components/filter-chips';
 import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
+import { RefreshButton, RefreshFailedNotice } from '@/shared/components/refresh-button';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { PaymentBadge } from '@/shared/components/status-badge';
@@ -36,12 +37,23 @@ import { Radius, Spacing } from '@/shared/theme/twd';
  */
 export default function ConsumerBillsScreen() {
   const router = useRouter();
-  const { state, reload } = useAsync(useCallback(() => listBills(), []));
+  const { state, reload, refresh, refreshing, refreshFailed } = useAsync(
+    useCallback(() => listBills(), [])
+  );
   const [filter, setFilter] = useState<string | null>(null);
 
   return (
-    <ScreenContainer>
-      <ScreenHeader title="Bills" subtitle="What you owe and what you've paid" />
+    <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
+      <ScreenHeader
+        title="Bills"
+        subtitle="What you owe and what you've paid"
+        action={<RefreshButton onPress={() => void refresh()} busy={refreshing} subject="bills" />}
+      />
+
+      {/* Only alongside rows that are actually on screen. If the very first load
+          failed there is nothing stale to caveat, and the error state below says
+          it better. */}
+      {state.status === 'ready' && refreshFailed && <RefreshFailedNotice subject="bills" />}
 
       {state.status === 'loading' && (
         <ScreenSection>

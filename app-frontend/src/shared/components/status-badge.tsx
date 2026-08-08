@@ -33,6 +33,8 @@ export type SyncStatus = 'synced' | 'pending' | 'failed';
 export type PaymentStatus = 'billed' | 'paid' | 'overdue' | 'pending';
 export type ServiceOrderStatus = 'pending' | 'completed' | 'cancelled';
 export type AccountStatus = 'active' | 'inactive';
+/** Matches the backend Feedback schema's `status` enum. */
+export type FeedbackStatus = 'open' | 'in-review' | 'resolved';
 /** Where an account stands on today's route. See READING below. */
 export type ReadingState = 'unread' | 'pending' | 'done';
 
@@ -107,6 +109,27 @@ const READING: Record<ReadingState, Descriptor> = {
   unread: { label: 'Unread', tone: 'neutral', icon: 'gauge' },
   pending: { label: 'Pending sync', tone: 'warning', icon: 'cloud-off' },
   done: { label: 'Done', tone: 'success', icon: 'check' },
+};
+
+/**
+ * Feedback triage, said in the consumer's words rather than the district's.
+ *
+ * The stored enum is `open | in-review | resolved`, which is a queue's vocabulary:
+ * "Open" is the state of a *ticket*, and a consumer who reported a billing error
+ * does not think of themselves as holding one. Each label is therefore rewritten
+ * from the reporter's side — what has happened to the thing I sent — while the
+ * wire values stay exactly as the schema defines them.
+ *
+ * `open` is neutral, not amber. It is the normal resting state of every message
+ * the moment it is sent, so painting it as a warning would put an alarm colour on
+ * a screen where nothing is wrong, and leave nothing louder for the states that
+ * actually differ. It is also honest about what it does *not* claim: "Received"
+ * says TWD has the message, not that anyone has read it.
+ */
+const FEEDBACK: Record<FeedbackStatus, Descriptor> = {
+  open: { label: 'Received', tone: 'neutral', icon: 'inbox' },
+  'in-review': { label: 'Being reviewed', tone: 'info', icon: 'refresh' },
+  resolved: { label: 'Resolved', tone: 'success', icon: 'check' },
 };
 
 const ACCOUNT: Record<AccountStatus, Descriptor> = {
@@ -185,6 +208,10 @@ export function ServiceOrderBadge({ status }: { status: ServiceOrderStatus }) {
 
 export function AccountStatusBadge({ status }: { status: AccountStatus }) {
   return <Badge descriptor={ACCOUNT[status]} />;
+}
+
+export function FeedbackBadge({ status }: { status: FeedbackStatus }) {
+  return <Badge descriptor={FEEDBACK[status]} />;
 }
 
 export function ReadingStateBadge({ state }: { state: ReadingState }) {

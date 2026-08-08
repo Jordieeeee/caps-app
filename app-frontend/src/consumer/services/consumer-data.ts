@@ -1,5 +1,13 @@
 import { apiFetch } from '@/shared/services/api-client';
-import type { Account, Bill, Notice } from '@/consumer/types';
+import type {
+  Account,
+  Bill,
+  ConsumerProfile,
+  ConsumerProfileEdit,
+  Feedback,
+  FeedbackType,
+  Notice,
+} from '@/consumer/types';
 
 /**
  * The consumer module's read layer — real I/O against the TWD backend.
@@ -47,8 +55,6 @@ export async function unlinkAccount(accountNumber: string): Promise<void> {
  * See app-backend/controllers/accountController.js.
  */
 
-export type FeedbackType = 'billing' | 'service-quality' | 'system-issue' | 'other';
-
 /**
  * POST /feedback — Consumer-gated, requires exactly these three fields.
  *
@@ -68,4 +74,47 @@ export async function submitFeedback(input: {
   });
 }
 
-export type { Account, Bill, Notice };
+/**
+ * GET /feedback — everything this consumer has sent, newest first.
+ *
+ * Ordering is the server's (`Feedback.listByConsumer` sorts on createdAt), not
+ * re-derived here: the list is short and already correct, and a client-side sort
+ * would be a second opinion about time that can disagree with the first.
+ */
+export async function listMyFeedback(): Promise<Feedback[]> {
+  const { feedback } = await apiFetch<{ feedback: Feedback[] }>('/feedback');
+  return feedback;
+}
+
+/** GET /profile — the caller's own registry record. Token-scoped, no parameter. */
+export async function getProfile(): Promise<ConsumerProfile> {
+  const { profile } = await apiFetch<{ profile: ConsumerProfile }>('/profile');
+  return profile;
+}
+
+/**
+ * PATCH /profile — the two self-service fields.
+ *
+ * Returns the profile the server ended up with rather than assuming the request
+ * body became the truth: the server normalises a phone number (`0917 123 4567` is
+ * stored as `09171234567`) and trims every address part, so echoing back what was
+ * typed would leave the screen showing something the district did not save.
+ */
+export async function updateProfile(edit: ConsumerProfileEdit): Promise<ConsumerProfile> {
+  const { profile } = await apiFetch<{ profile: ConsumerProfile }>('/profile', {
+    method: 'PATCH',
+    body: JSON.stringify(edit),
+  });
+  return profile;
+}
+
+export type {
+  Account,
+  Bill,
+  ConsumerProfile,
+  ConsumerProfileEdit,
+  Feedback,
+  FeedbackType,
+  MailingAddress,
+  Notice,
+} from '@/consumer/types';

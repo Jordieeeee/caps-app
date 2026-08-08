@@ -21,6 +21,8 @@ export type AsyncState<T> =
  */
 export function useAsync<T>(load: () => Promise<T>) {
   const [state, setState] = useState<AsyncState<T>>({ status: 'loading' });
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshFailed, setRefreshFailed] = useState(false);
 
   const run = useCallback(async () => {
     try {
@@ -35,13 +37,48 @@ export function useAsync<T>(load: () => Promise<T>) {
 
   const reload = useCallback(() => {
     setState({ status: 'loading' });
+    setRefreshFailed(false);
     void run();
   }, [run]);
+
+  /**
+   * Re-fetch without taking the current answer off the screen.
+   *
+   * This is what a manual refresh control needs and what `reload` cannot give it:
+   * `reload` blanks straight to the loading state, so tapping refresh on a list of
+   * bills would replace the bills with a spinner and then put them back — a flash
+   * that reads as data loss on a screen about money.
+   *
+   * A failed refresh keeps the data too, and says so through `refreshFailed`
+   * instead of collapsing to the error state. Discarding rows we still hold, and
+   * still believe, because a later request timed out would be the wrong claim in
+   * the more alarming direction: "we have nothing for you" when we do. The screen
+   * pairs the stale rows with a visible "couldn't update" line, so nothing is
+   * presented as fresher than it is.
+   *
+   * Before the first successful load there is nothing to preserve, so a failure
+   * there does fall through to the error state — hence the functional updater,
+   * which reads the live state without this callback having to depend on it.
+   * That dependency would matter: screens hand `refresh` to `useFocusEffect`, and
+   * a callback with a new identity every render is an infinite refetch loop.
+   */
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshFailed(false);
+    try {
+      setState({ status: 'ready', data: await load() });
+    } catch {
+      setState((prev) => (prev.status === 'ready' ? prev : { status: 'error' }));
+      setRefreshFailed(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [load]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- setState runs only after the await inside run(); the rule cannot see past the await boundary
     void run();
   }, [run]);
 
-  return { state, reload };
+  return { state, reload, refresh, refreshing, refreshFailed };
 }

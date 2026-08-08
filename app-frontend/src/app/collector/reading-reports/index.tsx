@@ -79,7 +79,7 @@ export default function RouteAccountsScreen() {
   }, [rows, query, statusFilter]);
 
   return (
-    <ScreenContainer>
+    <ScreenContainer onRefresh={reload} refreshing={false}>
       <ScreenHeader title="Route" subtitle="Your assigned accounts, in walk order" />
 
       <ScreenSection gap={Spacing.three}>
