@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -14,7 +14,7 @@ import {
 } from '@/consumer/services/consumer-data';
 import { formatDate } from '@/shared/format/date';
 import { useAuth } from '@/shared/auth/auth-context';
-import { Icon, type IconName } from '@/shared/components/icon';
+import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
@@ -24,7 +24,7 @@ import { TwdButton } from '@/shared/components/twd-button';
 import { formatPeso } from '@/shared/format/currency';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
-import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
+import { Radius, Spacing } from '@/shared/theme/twd';
 
 /**
  * Account — linked water accounts, plus the things you do once and forget.
@@ -436,7 +436,6 @@ function AccountCard({ account, onUnlinked }: { account: Account; onUnlinked: ()
 
 function SettingsSection() {
   const { signOut } = useAuth();
-  const router = useRouter();
 
   /**
    * Sign out confirms, but stays light about it.
@@ -470,25 +469,11 @@ function SettingsSection() {
       </ScreenSection>
 
       <ScreenSection gap={Spacing.three}>
-        <NavRow
-          icon="message-square"
-          label="Send feedback"
-          detail="Report an issue"
-          onPress={() => router.push('/consumer/account/feedback')}
-        />
-
-        {/* Sits directly under Send feedback, in that order, because the pair reads
-            as one thing a consumer does and then checks on. Kept as its own row
-            rather than a tab inside the form: the form is a task with a keyboard and
-            an unsaved draft, and putting a navigation control inside it invites
-            someone to lose a half-typed message by tapping across. */}
-        <NavRow
-          icon="inbox"
-          label="Your feedback"
-          detail="See what you've sent and its status"
-          onPress={() => router.push('/consumer/account/feedback-history')}
-        />
-
+        {/* Send feedback and Your feedback were here. They are on Notices now: that
+            tab is what the district says to the consumer, and feedback is the same
+            conversation in the other direction — whereas this screen is a settings
+            drawer, where someone looks for what their record says about them. See
+            consumer/notices/_layout.tsx. */}
         <TwdButton
           label="Sign out"
           icon="log-out"
@@ -502,40 +487,6 @@ function SettingsSection() {
         </ThemedText>
       </ScreenSection>
     </>
-  );
-}
-
-function NavRow({
-  icon,
-  label,
-  detail,
-  onPress,
-}: {
-  icon: IconName;
-  label: string;
-  detail?: string;
-  onPress: () => void;
-}) {
-  const theme = useTwdTheme();
-
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={detail ? `${label}. ${detail}` : label}
-      style={({ pressed }) => [
-        styles.navRow,
-        {
-          borderColor: theme.border,
-          backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
-        },
-      ]}>
-      <Icon name={icon} size={22} color={theme.textSecondary} />
-      <ThemedText type="defaultBold" style={styles.navLabel}>
-        {label}
-      </ThemedText>
-      <Icon name="chevron-right" size={20} color={theme.textSecondary} />
-    </Pressable>
   );
 }
 
@@ -608,16 +559,5 @@ const styles = StyleSheet.create({
   },
   detailLabel: { flexShrink: 0 },
   detailValue: { flex: 1, textAlign: 'right' },
-  navRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.three,
-    minHeight: MIN_TAP_TARGET,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Radius.card,
-    borderWidth: 2,
-  },
-  navLabel: { flex: 1 },
   footer: { textAlign: 'center', marginTop: Spacing.two },
 });

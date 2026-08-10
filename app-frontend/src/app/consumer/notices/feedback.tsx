@@ -88,7 +88,7 @@ export default function ConsumerFeedbackScreen() {
           <TwdButton
             label="View your feedback"
             variant="secondary"
-            onPress={() => router.replace('/consumer/account/feedback-history')}
+            onPress={() => router.replace('/consumer/notices/feedback-history')}
             accessibilityHint="Shows everything you have sent TWD and its status"
           />
           <TwdButton

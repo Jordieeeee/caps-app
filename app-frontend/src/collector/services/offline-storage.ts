@@ -100,10 +100,23 @@ export class OfflineStorage {
   }
 
   // Service Orders
+  /**
+   * Upserted on the order reference, not appended.
+   *
+   * A service order is a pre-existing record being completed, so its id is the
+   * office's — and confirming REC-001 twice has to leave one completed REC-001.
+   * Appending left two, which the server then collapsed back to one on its own
+   * `clientId` index while this phone went on reporting two records waiting to
+   * send: an outbox count that overstates the work outstanding, on the screen a
+   * collector checks before signing out. Meter readings still append, and must —
+   * each is a new fact carrying its own generated id.
+   */
   static async saveServiceOrder(order: ServiceOrder): Promise<void> {
     try {
       const existing = await this.getServiceOrders();
-      existing.push(order);
+      const at = existing.findIndex((o) => o.id === order.id);
+      if (at === -1) existing.push(order);
+      else existing[at] = order;
       await AsyncStorage.setItem(STORAGE_KEYS.SERVICE_ORDERS, JSON.stringify(existing));
       
       // Add to sync queue

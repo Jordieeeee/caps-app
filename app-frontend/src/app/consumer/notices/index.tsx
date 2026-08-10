@@ -1,10 +1,11 @@
+import { useRouter } from 'expo-router';
 import { useCallback } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { listNotices, type Notice } from '@/consumer/services/consumer-data';
-import { Icon } from '@/shared/components/icon';
+import { Icon, type IconName } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
 import { RefreshButton, RefreshFailedNotice } from '@/shared/components/refresh-button';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
@@ -12,7 +13,7 @@ import { ScreenHeader } from '@/shared/components/screen-header';
 import { NoticeBadge, noticeTone, useToneColor } from '@/shared/components/status-badge';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
-import { Radius, Spacing } from '@/shared/theme/twd';
+import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
 
 /** Urgent first. A notice about a main going out tomorrow does not wait its turn. */
 const ORDER: Record<Notice['priority'], number> = { high: 0, medium: 1, low: 2 };
@@ -25,6 +26,7 @@ const ORDER: Record<Notice['priority'], number> = { high: 0, medium: 1, low: 2 }
  * other's UI. See consumer-tabs.tsx for why "Notices" won.
  */
 export default function ConsumerNoticesScreen() {
+  const router = useRouter();
   const { state, reload, refresh, refreshing, refreshFailed } = useAsync(
     useCallback(() => listNotices(), [])
   );
@@ -41,6 +43,33 @@ export default function ConsumerNoticesScreen() {
 
       {/* See bills/index.tsx — only meaningful next to rows we are still showing. */}
       {state.status === 'ready' && refreshFailed && <RefreshFailedNotice subject="notices" />}
+
+      {/* Above the notices rather than under them, and outside every loading and
+          error branch, so it is reachable in all three states and on the day the
+          list is empty. A consumer who wants to report a burst pipe should not have
+          to scroll past the district's announcements to find the way to say so —
+          and these two rows have just moved off the Account tab, so for a while
+          people will be looking for them. */}
+      <ScreenSection gap={Spacing.two}>
+        <FeedbackRow
+          icon="message-square"
+          label="Send feedback"
+          detail="Report an issue"
+          onPress={() => router.push('/consumer/notices/feedback')}
+        />
+
+        {/* Sits directly under Send feedback, in that order, because the pair reads
+            as one thing a consumer does and then checks on. Kept as its own row
+            rather than a tab inside the form: the form is a task with a keyboard and
+            an unsaved draft, and putting a navigation control inside it invites
+            someone to lose a half-typed message by tapping across. */}
+        <FeedbackRow
+          icon="inbox"
+          label="Your feedback"
+          detail="See what you've sent and its status"
+          onPress={() => router.push('/consumer/notices/feedback-history')}
+        />
+      </ScreenSection>
 
       {state.status === 'loading' && (
         <ScreenSection>
@@ -78,6 +107,63 @@ export default function ConsumerNoticesScreen() {
         </ScreenSection>
       )}
     </ScreenContainer>
+  );
+}
+
+/**
+ * One way into the feedback conversation.
+ *
+ * Deliberately not styled as a notice card: these are controls, and a row that
+ * borrowed the card's shape would read as another thing the district had announced.
+ * Border, height and chevron match the nav rows this pair had on the Account tab, so
+ * the move changes where they are and not what they look like.
+ *
+ * The label and its detail are stacked, not laid side by side on one line. Side by
+ * side is what this row shipped as, and it broke on the second of the two: a `Text`
+ * defaults to `flexShrink: 0` in Yoga, so "See what you've sent and its status"
+ * — about 245pt at 14pt type — never gave any width back, while the label beside it
+ * carried `flex: 1` and absorbed the whole overflow. There are only ~222pt to share
+ * once the icon, the chevron and three 16pt gaps are paid for, so "Your feedback"
+ * was squeezed to nothing and wrapped, while "Send feedback" sat on one line beside
+ * its much shorter "Report an issue" — two rows of the same component, visibly
+ * misaligned. Stacking gives the detail the full width of the row and makes the
+ * layout independent of how long either string is, which is the property a
+ * translated or reworded label needs anyway.
+ */
+function FeedbackRow({
+  icon,
+  label,
+  detail,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
+  detail: string;
+  onPress: () => void;
+}) {
+  const theme = useTwdTheme();
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}. ${detail}`}
+      style={({ pressed }) => [
+        styles.feedbackRow,
+        {
+          borderColor: theme.border,
+          backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
+        },
+      ]}>
+      <Icon name={icon} size={22} color={theme.textSecondary} />
+      <View style={styles.feedbackText}>
+        <ThemedText type="defaultBold">{label}</ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {detail}
+        </ThemedText>
+      </View>
+      <Icon name="chevron-right" size={18} color={theme.textSecondary} />
+    </Pressable>
   );
 }
 
@@ -132,6 +218,20 @@ function NoticeCard({ notice }: { notice: Notice }) {
 }
 
 const styles = StyleSheet.create({
+  feedbackRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    minHeight: MIN_TAP_TARGET,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radius.card,
+    borderWidth: 2,
+  },
+  // `flex: 1` on the block, not on the label inside it: the block is what has to
+  // claim the space left between the icon and the chevron, and both lines then
+  // wrap inside it instead of competing with each other for the same row.
+  feedbackText: { flex: 1, gap: Spacing.half },
   card: {
     borderRadius: Radius.card,
     padding: Spacing.four,

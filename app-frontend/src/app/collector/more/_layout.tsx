@@ -14,13 +14,10 @@ import { Stack } from 'expo-router';
  * A screen added here without a Stack.Screen entry will do the same, so the list
  * below is not optional bookkeeping.
  *
- * The reconnection and disconnection folders deliberately have no `_layout` of
- * their own, so their list and confirm screens are children of *this* stack rather
- * than of a nested one. A nested stack would render its own header underneath this
- * one — two bars, two back buttons, for what is one push.
- *
- * The `[id]` titles are placeholders: each confirm screen sets its own at render
- * time. The entry still has to exist, or the fallback prints "[id]".
+ * Reconnections and disconnections used to be here and are now in the Route stack.
+ * They are field work at an address, not hub work: the collector is standing at the
+ * same gate on the same round, holding an order instead of a meter. See
+ * reading-reports/_layout.tsx.
  */
 export default function CollectorMoreLayout() {
   return (
@@ -32,16 +29,6 @@ export default function CollectorMoreLayout() {
         options={{ title: 'Edit Details', headerBackTitle: 'Account' }}
       />
       <Stack.Screen name="sync-status" options={{ title: 'Sync Status' }} />
-      <Stack.Screen name="reconnections/index" options={{ title: 'Reconnections' }} />
-      <Stack.Screen
-        name="reconnections/[id]"
-        options={{ title: 'Reconnection', headerBackTitle: 'Orders' }}
-      />
-      <Stack.Screen name="disconnections/index" options={{ title: 'Disconnections' }} />
-      <Stack.Screen
-        name="disconnections/[id]"
-        options={{ title: 'Disconnection', headerBackTitle: 'Orders' }}
-      />
       <Stack.Screen name="printer" options={{ title: 'Printer' }} />
     </Stack>
   );

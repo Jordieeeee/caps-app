@@ -70,7 +70,7 @@ export default function ConsumerFeedbackHistoryScreen() {
               // replace, not push: arriving at the form from an empty history and
               // then backing out should land on Account, not on the empty list the
               // message no longer belongs in.
-              onPress: () => router.replace('/consumer/account/feedback'),
+              onPress: () => router.replace('/consumer/notices/feedback'),
             }}
           />
         </ScreenSection>

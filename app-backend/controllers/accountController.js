@@ -7,26 +7,13 @@ const ErrorCodes = require('../utils/errorCodes');
 const { withPaymentSummary } = require('../utils/accountPaymentSummary');
 const { barangayOf, summarise } = require('../utils/barangay');
 const { displayName } = require('../utils/consumerIdentity');
+const { formatAddress } = require('../utils/address');
 
 exports.listMine = async (req, res) => {
   const accounts = await Account.findByConsumer(req.user.sub);
   res.json({ accounts: await Promise.all(accounts.map((a) => withPaymentSummary(a.toObject()))) });
 };
 
-/**
- * The portal's structured service address as one line.
- *
- * Empty parts are dropped rather than rendered as gaps — a stop printed as
- * "24 Mabini Street, , Tanauan City, " reads as a broken record, and a collector
- * cannot tell a missing barangay from a rendering bug.
- */
-function formatAddress(address) {
-  if (!address) return '';
-  return [address.houseStreet, address.barangay, address.city, address.province]
-    .map((part) => (part ? String(part).trim() : ''))
-    .filter(Boolean)
-    .join(', ');
-}
 
 /** Account.type → the rate class printed on the receipt. */
 const RATE_CLASS = {

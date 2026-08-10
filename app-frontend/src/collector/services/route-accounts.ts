@@ -232,8 +232,26 @@ export class RouteAccountService {
     >();
 
     for (const r of readings) {
-      if (r.readingDate !== today) continue;
-      // Last write wins: a re-read of the same meter today is a correction.
+      /**
+       * An earlier day's reading is dropped once TWD has it — the route is a day's
+       * work, and a stop finished and filed last week starts clean.
+       *
+       * An *unsynced* one never is, whatever day it carries. It is still sitting in
+       * this phone's outbox, which is the exact fact `pending` exists to state, and
+       * dropping it here reset the stop to "Unread" the moment the clock passed
+       * midnight. A collector who worked a barangay with no signal on Monday opened
+       * the route on Tuesday to a list claiming none of it had been done — and the
+       * "Pending sync" filter said 0 while the sync screen counted the same records
+       * as waiting.
+       *
+       * The cost is not only the wrong label. Re-reading a meter appends a record
+       * with a fresh clientId, and sync is idempotent on that id, so the second
+       * reading is a new row at TWD rather than a correction of the first — two
+       * readings for one meter, on the phone whose whole job is to record it once.
+       */
+      if (r.readingDate !== today && r.synced) continue;
+      // Last write wins: a re-read of the same meter is a correction, and the
+      // outbox is appended to in order, so the newest record is the last one seen.
       byAccount.set(r.accountNumber, {
         currentReading: r.currentReading,
         consumption: r.consumption,

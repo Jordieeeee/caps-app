@@ -4,9 +4,10 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { RouteAccountService, type RouteAccountRow } from '@/collector/services/route-accounts';
+import { ServiceOrderService } from '@/collector/services/service-orders';
 import { timeOfDay } from '@/collector/services/today';
 import { FilterChips } from '@/shared/components/filter-chips';
-import { Icon } from '@/shared/components/icon';
+import { Icon, type IconName } from '@/shared/components/icon';
 import { ListEmpty, ListError } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
@@ -177,6 +178,12 @@ export default function RouteAccountsScreen() {
         </ScreenSection>
       )}
 
+      {/* The other work done at these same gates. It sat behind the More tab —
+          a hub for sync detail and signing out — so serving a disconnection meant
+          leaving the route, going to a settings screen and coming back. It is the
+          same round, the same addresses, and often the same visit. */}
+      <ServiceOrderLinks />
+
       <ScreenSection gap={Spacing.three}>
         <TwdTextField
           label="Find an account"
@@ -272,6 +279,100 @@ export default function RouteAccountsScreen() {
         ))}
       </ScreenSection>
     </ScreenContainer>
+  );
+}
+
+/**
+ * Reconnections and disconnections, from the route they are walked on.
+ *
+ * The counts are read from the phone's cache and never from the network. This block
+ * renders inside the route list, which has to say the same thing in a barangay with
+ * no signal as it does at the depot — and a count that quietly needed signal would
+ * show "nothing to do" exactly where a collector is least able to check.
+ *
+ * The count is the point of the rows. "Disconnections ›" tells a collector nothing
+ * they have to act on; "Disconnections · 2 waiting" is a reason to open it before
+ * they leave the barangay.
+ */
+function ServiceOrderLinks() {
+  const router = useRouter();
+  const { state, refresh } = useAsync(useCallback(() => ServiceOrderService.pendingCounts(), []));
+
+  // Confirming an order is the thing that changes these numbers, and it happens on
+  // a screen pushed from here — so the count has to be re-read on the way back.
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh])
+  );
+
+  const counts = state.status === 'ready' ? state.data : null;
+
+  return (
+    <ScreenSection gap={Spacing.two}>
+      <ThemedText type="smallBold" themeColor="textSecondary" style={styles.ordersTitle}>
+        Service orders
+      </ThemedText>
+      <OrderLink
+        icon="file-check"
+        label="Reconnections"
+        count={counts?.reconnection}
+        fallback="Restore service"
+        onPress={() => router.push('/collector/reading-reports/reconnections')}
+      />
+      <OrderLink
+        icon="alert-triangle"
+        label="Disconnections"
+        count={counts?.disconnection}
+        fallback="Delinquent accounts"
+        onPress={() => router.push('/collector/reading-reports/disconnections')}
+      />
+    </ScreenSection>
+  );
+}
+
+function OrderLink({
+  icon,
+  label,
+  count,
+  fallback,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
+  /** Undefined while the count is still being read — never rendered as 0. */
+  count: number | undefined;
+  fallback: string;
+  onPress: () => void;
+}) {
+  const theme = useTwdTheme();
+  const waiting = count !== undefined && count > 0;
+  // Warning colour only when there is something to act on. A permanent amber row is
+  // wallpaper by the second week, and then it is not there on the day it matters.
+  const accent = waiting ? theme.warning : theme.textSecondary;
+  const detail = count === undefined ? fallback : count === 0 ? 'None waiting' : `${count} waiting`;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}. ${detail}`}
+      style={({ pressed }) => [
+        styles.orderLink,
+        {
+          borderColor: waiting ? theme.warning : theme.border,
+          backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
+        },
+      ]}>
+      <Icon name={icon} size={22} color={accent} />
+      <ThemedText type="defaultBold" style={styles.orderLinkLabel}>
+        {label}
+      </ThemedText>
+      <ThemedText type="small" style={{ color: accent }} numberOfLines={1}>
+        {detail}
+      </ThemedText>
+      <Icon name="chevron-right" size={18} color={theme.textSecondary} />
+    </Pressable>
   );
 }
 
@@ -460,6 +561,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.one,
   },
+  ordersTitle: { textTransform: 'uppercase', letterSpacing: 0.6 },
+  orderLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    minHeight: MIN_TAP_TARGET,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radius.card,
+    borderWidth: 2,
+  },
+  orderLinkLabel: { flex: 1 },
   group: { gap: Spacing.three },
   heading: {
     flexDirection: 'row',

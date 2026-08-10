@@ -92,20 +92,10 @@ export default function CollectorMore() {
           }
           onPress={() => router.push('/collector/more/printer')}
         />
-        <NavRow
-          icon="file-check"
-          label="Reconnections"
-          detail="Restore service"
-          onPress={() => router.push('/collector/more/reconnections')}
-        />
-        {/* Previously unreachable: disconnections.tsx had no tab trigger and no
-            link anywhere in src/. It shipped as ~300 lines of dead route. */}
-        <NavRow
-          icon="alert-triangle"
-          label="Disconnections"
-          detail="Delinquent accounts"
-          onPress={() => router.push('/collector/more/disconnections')}
-        />
+        {/* Reconnections and disconnections were here. They are on the Route screen
+            now — they are work done at an address on the round, and reaching them
+            meant leaving the route, opening a hub built for sync detail and signing
+            out, and coming back. See collector/reading-reports/index.tsx. */}
       </ScreenSection>
 
       {/* Appearance sits above Session and below the navigation rows: it is a

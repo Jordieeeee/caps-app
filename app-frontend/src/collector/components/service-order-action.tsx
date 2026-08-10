@@ -105,6 +105,11 @@ function ActionForm({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow 
   const [error, setError] = useState<string | null>(null);
 
   const alreadyDone = order.state !== 'pending';
+  /**
+   * Undefined is not zero. No order carries a balance yet — the district's `bills`
+   * collection is empty — and printing ₱0.00 on a disconnection slip the consumer
+   * keeps would tell them, in writing, that they owe nothing.
+   */
   const amount = order.settledAmount ?? order.outstandingBalance;
 
   const notice = useCallback(
@@ -164,7 +169,9 @@ function ActionForm({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow 
         <ThemedView type="backgroundElement" style={styles.card}>
           <Row label="Account no." value={order.accountNumber} />
           <Row label="Order ref." value={order.id} />
-          <Row label={copy.balanceLabel} value={formatPeso(amount)} />
+          {/* Only when the order actually carries a figure. See the note on
+              `amount` above — ₱0.00 here is a claim, not a placeholder. */}
+          {amount !== undefined && <Row label={copy.balanceLabel} value={formatPeso(amount)} />}
           {order.settledDate && <Row label="Settled on" value={order.settledDate} />}
           <Row label="Reason" value={order.reason} />
         </ThemedView>
