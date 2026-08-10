@@ -33,6 +33,8 @@ export type SyncStatus = 'synced' | 'pending' | 'failed';
 export type PaymentStatus = 'billed' | 'paid' | 'overdue' | 'pending';
 export type ServiceOrderStatus = 'pending' | 'completed' | 'cancelled';
 export type AccountStatus = 'active' | 'inactive';
+/** Mirrors `LinkRequestStatus` in consumer/types.ts and the server's enum. */
+export type LinkRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 /** Matches the backend Feedback schema's `status` enum. */
 export type FeedbackStatus = 'open' | 'in-review' | 'resolved';
 /** Where an account stands on today's route. See READING below. */
@@ -139,6 +141,29 @@ const ACCOUNT: Record<AccountStatus, Descriptor> = {
 };
 
 /**
+ * A request to have an account added, from the consumer's side of the counter.
+ *
+ * ⚠️ `approved` IS NOT "LINKED", and the label must not let anyone read it that way.
+ * Staff agreeing to make the link and the link existing are two events, and the
+ * second happens in the Admin Portal — the account appears in the list above when it
+ * does. "Approved — adding it" says the decision went their way while keeping the
+ * account list itself as the only claim that the account is actually theirs.
+ *
+ * `pending` is neutral rather than amber, matching FEEDBACK above: a request that
+ * was just filed is in its normal resting state, and an alarm colour on every row of
+ * a screen where nothing is wrong leaves nothing louder for the rows that differ.
+ *
+ * `rejected` is bare. There is no reason to show because the server sends none, on
+ * purpose — see presentRequest in app-backend/controllers/accountController.js.
+ */
+const LINK_REQUEST: Record<LinkRequestStatus, Descriptor> = {
+  pending: { label: 'Waiting for TWD', tone: 'neutral', icon: 'inbox' },
+  approved: { label: 'Approved — adding it', tone: 'success', icon: 'check' },
+  rejected: { label: 'Not approved', tone: 'danger', icon: 'x' },
+  cancelled: { label: 'Withdrawn', tone: 'neutral', icon: 'x' },
+};
+
+/**
  * What a notice *is* — its label and glyph. The consumer reads this to decide
  * whether it affects their water.
  */
@@ -208,6 +233,10 @@ export function ServiceOrderBadge({ status }: { status: ServiceOrderStatus }) {
 
 export function AccountStatusBadge({ status }: { status: AccountStatus }) {
   return <Badge descriptor={ACCOUNT[status]} />;
+}
+
+export function LinkRequestBadge({ status }: { status: LinkRequestStatus }) {
+  return <Badge descriptor={LINK_REQUEST[status]} />;
 }
 
 export function FeedbackBadge({ status }: { status: FeedbackStatus }) {

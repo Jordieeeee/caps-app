@@ -1,9 +1,9 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { FEEDBACK_OPTIONS } from '@/consumer/feedback-options';
+import { FEEDBACK_OPTIONS, feedbackOption } from '@/consumer/feedback-options';
 import { submitFeedback, type FeedbackType } from '@/consumer/services/consumer-data';
 import { useTheme } from '@/hooks/use-theme';
 import { Icon } from '@/shared/components/icon';
@@ -24,14 +24,39 @@ type Status = 'editing' | 'sending' | 'sent';
  * exactly as the skill's highest-severity form guidance requires ("Show loading
  * then success/error / Don't: no feedback after submit").
  */
+/**
+ * Optional prefill, so another screen can open this form already pointed at its
+ * subject — "This isn't my account" on the Account tab is the first caller.
+ *
+ * Prefilled and editable rather than posted behind a confirmation dialog: the
+ * message goes to the district in the consumer's name, so they see the wording and
+ * can correct it. `type` is validated against the real option list before it is
+ * trusted — a param is a string from a URL, and setting state to a value no option
+ * matches would leave every radio unselected with no way to tell why.
+ */
+function usePrefill() {
+  const params = useLocalSearchParams<{ type?: string; subject?: string; message?: string }>();
+  const type = params.type as FeedbackType | undefined;
+
+  return {
+    type: type && feedbackOption(type) ? type : null,
+    subject: params.subject ?? '',
+    message: params.message ?? '',
+  };
+}
+
 export default function ConsumerFeedbackScreen() {
   const theme = useTheme();
   const twd = useTwdTheme();
   const router = useRouter();
+  const prefill = usePrefill();
 
-  const [type, setType] = useState<FeedbackType | null>(null);
-  const [subject, setSubject] = useState('');
-  const [message, setMessage] = useState('');
+  // Initial state only. Re-reading the params on every render would fight the
+  // consumer for the field: each keystroke re-renders, and a prefill that reasserts
+  // itself is a form you cannot edit.
+  const [type, setType] = useState<FeedbackType | null>(prefill.type);
+  const [subject, setSubject] = useState(prefill.subject);
+  const [message, setMessage] = useState(prefill.message);
   const [status, setStatus] = useState<Status>('editing');
   const [error, setError] = useState<string | null>(null);
 

@@ -12,12 +12,21 @@ import type {
  * types. They are separate now so the mock file could go.
  */
 
+/**
+ * One water account, as GET /accounts presents it.
+ *
+ * Sourced from the district's `serviceconnections` registry, not from this app —
+ * a row exists because TWD connected a meter to this consumer, so there is no
+ * client-side notion of "linking" one. `id` is the connection's id for that reason.
+ */
 export interface Account {
   id: string;
   accountNumber: string;
+  /** Where the *meter* is (the service address), not where the bill is posted. */
   address: string;
   type: 'residential' | 'commercial' | 'government';
   status: 'active' | 'inactive';
+  /** ISO 8601 date the district connected the meter, when it recorded one. */
   linkedDate?: string;
   /**
    * null when the balance is not attributable to this account on its own — a
@@ -27,6 +36,36 @@ export interface Account {
    */
   outstanding: number | null;
   paymentStatus: 'Active' | 'Past Due' | 'Unknown';
+}
+
+/**
+ * Where a request to add an account has got to.
+ *
+ * `approved` does not mean the account is linked — it means staff agreed to link
+ * it, in the Admin Portal, which is the only place the connection can be made. The
+ * account then appears in `listAccounts()` on its own. Treat this as the status of
+ * a conversation, not of a permission.
+ */
+export type LinkRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+/**
+ * One request the consumer has filed with TWD.
+ *
+ * There is deliberately no `reason` field for a rejection. The server has none to
+ * send: a staff note like "that account belongs to someone else" would confirm both
+ * that the account exists and that it is held, which is precisely what the request
+ * flow is built not to disclose. A rejected consumer is pointed at the office.
+ * See `presentRequest` in app-backend/controllers/accountController.js.
+ */
+export interface AccountLinkRequest {
+  id: string;
+  accountNumber: string;
+  note: string | null;
+  status: LinkRequestStatus;
+  /** ISO 8601. */
+  submittedAt: string;
+  /** ISO 8601, or null while nobody has decided. */
+  decidedAt: string | null;
 }
 
 export interface Bill {
@@ -129,7 +168,15 @@ export interface Feedback {
 }
 
 /**
- * Matches MAX_LINKED_ACCOUNTS in app-backend/controllers/accountController.js.
- * The server is the enforcing side; this only drives the "n of 5 linked" copy.
+ * Deliberately absent: `MAX_ACCOUNTS`.
+ *
+ * It was 5, and its comment said it matched `MAX_LINKED_ACCOUNTS` in
+ * app-backend/controllers/accountController.js — a constant that no longer exists
+ * there. It drove a "1 of 5" counter and a warning at the cap.
+ *
+ * There is nothing left for it to count. A consumer's accounts are however many
+ * meters the district has connected to them; the app neither creates nor limits
+ * that, so printing a ceiling the app does not enforce (against a backend that does
+ * not either) was inventing a rule. If the office-approval flow lands with a real
+ * cap, it belongs on the server first and is re-added here to match.
  */
-export const MAX_ACCOUNTS = 5;

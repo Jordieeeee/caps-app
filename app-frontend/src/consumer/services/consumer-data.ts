@@ -1,6 +1,7 @@
 import { apiFetch } from '@/shared/services/api-client';
 import type {
   Account,
+  AccountLinkRequest,
   Bill,
   ConsumerProfile,
   ConsumerProfileEdit,
@@ -40,19 +41,64 @@ export async function listNotices(): Promise<Notice[]> {
   return announcements;
 }
 
-export async function unlinkAccount(accountNumber: string): Promise<void> {
-  await apiFetch(`/accounts/${encodeURIComponent(accountNumber)}`, { method: 'DELETE' });
+/**
+ * POST /accounts/link-requests — ask TWD to add an account to this profile.
+ *
+ * ⚠️ THIS DOES NOT LINK ANYTHING, and the screen calling it must not imply that it
+ * does. It files a request; TWD staff verify the person and make the link in the
+ * Admin Portal, after which the account arrives through `listAccounts()` on its own.
+ *
+ * The server never reports whether the account number exists — a real account, a
+ * stranger's account and a typo all return the same 201. That is deliberate (account
+ * numbers are sequential and printed on every bill), so there is nothing to surface
+ * here beyond "TWD has your request", and inventing a "found it" state would be a
+ * claim the response cannot support.
+ *
+ * Returns 200 rather than 201 when an identical request is already pending, with
+ * that request — which callers can treat the same way.
+ */
+export async function requestAccountLink(input: {
+  accountNumber: string;
+  note?: string;
+}): Promise<AccountLinkRequest> {
+  const { request } = await apiFetch<{ request: AccountLinkRequest }>('/accounts/link-requests', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return request;
+}
+
+/** GET /accounts/link-requests — this consumer's own requests, newest first. */
+export async function listLinkRequests(): Promise<AccountLinkRequest[]> {
+  const { requests } = await apiFetch<{ requests: AccountLinkRequest[] }>('/accounts/link-requests');
+  return requests;
+}
+
+/** DELETE /accounts/link-requests/:id — withdraw one that is still pending. */
+export async function cancelLinkRequest(id: string): Promise<void> {
+  await apiFetch(`/accounts/link-requests/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 /**
- * Deliberately absent: `linkAccount`.
+ * Deliberately absent: `linkAccount` AND `unlinkAccount`. Neither is a client
+ * problem — the server refuses both with 403, and would be wrong not to.
  *
- * The server now refuses self-service linking (403) because the old endpoint
- * attached any account number the caller sent, with no ownership check — a full
- * customer-base enumeration over sequential account numbers. Linking happens at the
- * TWD office until the district picks a verification workflow. A client function
- * here would only produce a button that always fails.
- * See app-backend/controllers/accountController.js.
+ * `linkAccount`: the old endpoint attached any account number the caller sent, with
+ * no ownership check — a full customer-base enumeration over sequential account
+ * numbers printed on every bill. `requestAccountLink` above is what replaced it:
+ * the same intent, routed through a human who can check ID, and answering nothing
+ * about accounts the caller does not already hold.
+ *
+ * `unlinkAccount`: this file used to DELETE `/accounts/:accountNumber`, which
+ * `$pull`ed the caller out of `Account.consumerIds` — a field nothing reads. Now
+ * that the accounts list is sourced from the district's `serviceconnections`
+ * registry, that write changes nothing: the account reappears on the next refresh,
+ * after the app has said it was removed. The registry is read-only from the mobile
+ * backend by design, so detaching a consumer from a meter is a counter transaction,
+ * not a button. The screen offers "This isn't my account" instead, which files
+ * feedback for the office to act on.
+ *
+ * See app-backend/controllers/accountController.js for both.
  */
 
 /**
@@ -110,11 +156,13 @@ export async function updateProfile(edit: ConsumerProfileEdit): Promise<Consumer
 
 export type {
   Account,
+  AccountLinkRequest,
   Bill,
   ConsumerProfile,
   ConsumerProfileEdit,
   Feedback,
   FeedbackType,
+  LinkRequestStatus,
   MailingAddress,
   Notice,
 } from '@/consumer/types';

@@ -1,5 +1,13 @@
 const router = require('express').Router();
-const { listMine, listRoute, link, unlink } = require('../controllers/accountController');
+const {
+  listMine,
+  listRoute,
+  link,
+  unlink,
+  createLinkRequest,
+  listLinkRequests,
+  cancelLinkRequest,
+} = require('../controllers/accountController');
 const { auth, requireRole } = require('../middleware/auth');
 const { requireFields } = require('../middleware/validate');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -18,6 +26,26 @@ router.get('/route', auth, requireRole('Collector'), asyncHandler(listRoute));
 router.use(auth, requireRole('Consumer'));
 
 router.get('/', asyncHandler(listMine));
+
+/**
+ * Link requests, declared before `/:accountNumber` below.
+ *
+ * The order matters for the DELETE pair and not for the rest: Express matches
+ * `/:accountNumber` against a single path segment, so `/link-requests/<id>` (two
+ * segments) could not be captured by it either way — but keeping the specific
+ * routes above the parameterised one is the habit that survives someone later
+ * widening the pattern.
+ */
+router.post('/link-requests', requireFields('accountNumber'), asyncHandler(createLinkRequest));
+router.get('/link-requests', asyncHandler(listLinkRequests));
+router.delete('/link-requests/:id', asyncHandler(cancelLinkRequest));
+
+/**
+ * Both refuse, and both stay mounted. `link` predates the request queue and `unlink`
+ * cannot work against a registry this backend may not write; each returns a 403 that
+ * explains itself, which is what an older build still on someone's phone needs to
+ * hear instead of a 404. See the controller for the reasoning behind each.
+ */
 router.post('/link', requireFields('accountNumber'), asyncHandler(link));
 router.delete('/:accountNumber', asyncHandler(unlink));
 

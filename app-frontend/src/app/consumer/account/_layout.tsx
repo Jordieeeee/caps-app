@@ -14,6 +14,10 @@ export default function ConsumerAccountLayout() {
     <Stack screenOptions={{ headerShown: true, headerBackTitle: 'Account' }}>
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="edit-details" options={{ title: 'Edit my details' }} />
+      {/* "Request an account", not "Link an account" — the header is the first thing
+          read on the screen and it has to make the same promise the button does. The
+          app cannot link anything; it asks TWD to. */}
+      <Stack.Screen name="link-account" options={{ title: 'Request an account' }} />
     </Stack>
   );
 }

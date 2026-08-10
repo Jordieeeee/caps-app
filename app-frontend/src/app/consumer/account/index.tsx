@@ -4,12 +4,13 @@ import { Alert, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MAX_ACCOUNTS } from '@/consumer/types';
 import {
+  cancelLinkRequest,
   getProfile,
   listAccounts,
-  unlinkAccount,
+  listLinkRequests,
   type Account,
+  type AccountLinkRequest,
   type ConsumerProfile,
 } from '@/consumer/services/consumer-data';
 import { formatDate } from '@/shared/format/date';
@@ -18,7 +19,7 @@ import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
-import { AccountStatusBadge } from '@/shared/components/status-badge';
+import { AccountStatusBadge, LinkRequestBadge } from '@/shared/components/status-badge';
 import { ThemeToggle } from '@/shared/components/theme-toggle';
 import { TwdButton } from '@/shared/components/twd-button';
 import { formatPeso } from '@/shared/format/currency';
@@ -36,13 +37,17 @@ import { Radius, Spacing } from '@/shared/theme/twd';
  */
 export default function ConsumerAccountScreen() {
   /**
-   * Two independent reads, settled independently.
+   * Three independent reads, settled independently.
    *
    * `Promise.all` was wrong here the moment this screen grew a second source: it
    * rejects on the first failure, so a profile request that timed out would blank
-   * the linked-accounts list that had already arrived — and, before the
-   * restructure below, would have taken Sign out down with it. `allSettled` lets
-   * each section report its own outcome, which is also the truthful one.
+   * the accounts list that had already arrived — and, before the restructure below,
+   * would have taken Sign out down with it. `allSettled` lets each section report
+   * its own outcome, which is also the truthful one.
+   *
+   * Pending link requests are the third. They fail softest of all: `null` hides the
+   * section entirely rather than claiming a consumer has no requests open, which is
+   * the wrong thing to say to someone deciding whether to send another one.
    *
    * Bills are deliberately not fetched. This screen used to pull the full bill
    * list purely to filter it per account for the balance row; the server now sends
@@ -50,10 +55,15 @@ export default function ConsumerAccountScreen() {
    * could not be used against real data anyway.
    */
   const load = useCallback(async () => {
-    const [accounts, profile] = await Promise.allSettled([listAccounts(), getProfile()]);
+    const [accounts, profile, requests] = await Promise.allSettled([
+      listAccounts(),
+      getProfile(),
+      listLinkRequests(),
+    ]);
     return {
       accounts: accounts.status === 'fulfilled' ? accounts.value : null,
       profile: profile.status === 'fulfilled' ? profile.value : null,
+      requests: requests.status === 'fulfilled' ? requests.value : null,
     };
   }, []);
   const { state, reload } = useAsync(load);
@@ -79,7 +89,8 @@ export default function ConsumerAccountScreen() {
       )}
 
       {data && <DetailsSection profile={data.profile} onRetry={reload} />}
-      {data && <AccountsSection accounts={data.accounts} onChanged={reload} />}
+      {data && <AccountsSection accounts={data.accounts} onRetry={reload} />}
+      {data && <LinkRequestsSection requests={data.requests} onChanged={reload} />}
 
       {/* Rendered unconditionally, outside every data branch, on purpose.
           Sign out used to live inside the body that only rendered once the
@@ -92,14 +103,32 @@ export default function ConsumerAccountScreen() {
   );
 }
 
+/**
+ * The consumer's water accounts, as the district's registry holds them.
+ *
+ * ⚠️ THIS SECTION USED TO BE EMPTY FOR EVERYONE. `GET /accounts` resolved ownership
+ * through `Account.consumerIds`, a seed-script field whose every reference in the
+ * district's database is dangling, so it returned `[]` for every real login and this
+ * screen told consumers who own a meter to "link their first account". The server
+ * now reads `serviceconnections`, the collection the portal actually maintains.
+ *
+ * The consequence for this screen is that linking is not a thing the app does. A row
+ * here exists because TWD connected a meter to this person; there is no client-side
+ * link to create and none to undo. Hence no "Link an account" button, no count
+ * against a cap the app cannot enforce, and no Unlink — see AccountCard.
+ */
 function AccountsSection({
   accounts,
-  onChanged,
+  onRetry,
 }: {
   accounts: Account[] | null;
-  onChanged: () => void;
+  /* Was `onChanged`, from when Unlink could mutate this list from inside a card.
+     Nothing on this screen changes an account any more, so the only thing left to
+     do is re-read after a failed one. */
+  onRetry: () => void;
 }) {
   const theme = useTwdTheme();
+  const router = useRouter();
 
   if (!accounts) {
     return (
@@ -107,70 +136,200 @@ function AccountsSection({
         <ListError
           title="Could not load your accounts"
           body="We couldn't reach Tanauan City Water District just now. Check your connection and try again."
-          onRetry={onChanged}
+          onRetry={onRetry}
         />
       </ScreenSection>
     );
   }
 
-  const canAdd = accounts.length < MAX_ACCOUNTS;
+  return (
+    <ScreenSection gap={Spacing.three}>
+      {accounts.length === 0 ? (
+        /* Not "link your first account" — that blamed the consumer for a record the
+           district owns. An empty list means TWD has no service connection filed
+           against this profile, which is something only the office can fix, so the
+           copy says where to go instead of offering a button that cannot do it. */
+        <ListEmpty
+          icon="home"
+          title="No water account yet"
+          body="TWD hasn't connected a water account to your profile. If you have a TWD bill with an account number on it, you can ask the district to add it."
+          action={{
+            label: 'Request an account',
+            onPress: () => router.push('/consumer/account/link-account'),
+          }}
+        />
+      ) : (
+        <>
+          <View style={styles.countRow}>
+            <ThemedText type="defaultBold">
+              {accounts.length === 1 ? 'Your water account' : 'Your water accounts'}
+            </ThemedText>
+            {/* Only worth a count when there is something to count against. Beside
+                the singular heading, "1 account" said the same word twice. */}
+            {accounts.length > 1 && (
+              <ThemedText type="small" themeColor="textSecondary">
+                {accounts.length} accounts
+              </ThemedText>
+            )}
+          </View>
+
+          {accounts.map((account) => (
+            <AccountCard key={account.id} account={account} />
+          ))}
+
+          {/* "Request", never "Link". The tap sends a message to the office; it does
+              not attach anything, and the button is the first place that promise is
+              made. See link-account.tsx. */}
+          <TwdButton
+            label="Request another account"
+            icon="plus"
+            variant="secondary"
+            onPress={() => router.push('/consumer/account/link-account')}
+            accessibilityHint="Asks TWD to add another water account to your profile"
+          />
+
+          <View
+            style={[styles.limitNote, { borderColor: theme.border }]}
+            accessible
+            accessibilityRole="summary">
+            <Icon name="info" size={20} color={theme.textSecondary} />
+            <ThemedText type="small" themeColor="textSecondary" style={styles.limitText}>
+              TWD staff add accounts by hand after checking who you are, so a request can
+              take a few working days and you may be asked to visit the office with a
+              valid ID.
+            </ThemedText>
+          </View>
+        </>
+      )}
+    </ScreenSection>
+  );
+}
+
+/**
+ * Requests the consumer has filed, and what became of them.
+ *
+ * Its whole job is to stop a request from disappearing. Someone who sends one and
+ * then sees the same unchanged Account tab has no way to tell whether it arrived, so
+ * they send it again — which is how five identical rows reach a counter that only
+ * needed one. Showing the request back, with its status, is what makes the send feel
+ * like it landed somewhere.
+ *
+ * Decided requests stay listed rather than vanishing on approval. A row that
+ * disappears is indistinguishable from one that was never sent, and "Approved" next
+ * to an account that has now appeared above is the only place the consumer can see
+ * those two facts connect.
+ *
+ * Renders nothing at all when there are no requests — an empty card headed "Your
+ * requests" on the tab of a consumer who has never made one is furniture.
+ */
+function LinkRequestsSection({
+  requests,
+  onChanged,
+}: {
+  requests: AccountLinkRequest[] | null;
+  onChanged: () => void;
+}) {
+  if (!requests || requests.length === 0) return null;
 
   return (
-    <>
-      <ScreenSection gap={Spacing.three}>
-        {accounts.length === 0 ? (
-          // First run. The whole module is inert until this is done, so it gets the
-          // screen rather than a line of grey text — the old copy ("You have not
-          // linked a water account yet") sat inside a card as a passive statement
-          // with nothing to tap.
-          <ListEmpty
-            icon="home"
-            title="Link your first account"
-            body="Enter the account number printed on your TWD bill. You can link up to 5 accounts — useful if you pay for more than one property."
-            action={{ label: 'Link an account', onPress: () => promptLinkNotBuilt() }}
-          />
-        ) : (
-          <>
-            <View style={styles.countRow}>
-              <ThemedText type="defaultBold">
-                {accounts.length === 1 ? '1 linked account' : `${accounts.length} linked accounts`}
-              </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {accounts.length} of {MAX_ACCOUNTS}
-              </ThemedText>
-            </View>
+    <ScreenSection gap={Spacing.three}>
+      <ThemedText type="defaultBold">Your account requests</ThemedText>
+      {requests.map((request) => (
+        <LinkRequestCard key={request.id} request={request} onChanged={onChanged} />
+      ))}
+    </ScreenSection>
+  );
+}
 
-            {accounts.map((account) => (
-              <AccountCard key={account.id} account={account} onUnlinked={onChanged} />
-            ))}
+function LinkRequestCard({
+  request,
+  onChanged,
+}: {
+  request: AccountLinkRequest;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
 
-            {canAdd ? (
-              <TwdButton
-                label="Link another account"
-                icon="plus"
-                variant="secondary"
-                onPress={promptLinkNotBuilt}
-                accessibilityHint="Links another TWD water account to your profile"
-              />
-            ) : (
-              <View
-                style={[
-                  styles.limitNote,
-                  { borderColor: theme.warning, backgroundColor: theme.warningSurface },
-                ]}
-                accessible
-                accessibilityRole="summary">
-                <Icon name="info" size={20} color={theme.warning} />
-                <ThemedText type="small" style={[styles.limitText, { color: theme.warning }]}>
-                  You&apos;ve linked the maximum of {MAX_ACCOUNTS} accounts. Contact the TWD office
-                  if you need more.
-                </ThemedText>
-              </View>
-            )}
-          </>
-        )}
-      </ScreenSection>
-    </>
+  /**
+   * Withdrawing confirms first — not because it is dangerous, but because it is
+   * quietly expensive: the office queue is worked by hand, and a consumer who
+   * withdraws by mistake waits days for a request nobody has.
+   */
+  const confirmCancel = () => {
+    Alert.alert(
+      `Withdraw your request for ${request.accountNumber}?`,
+      "TWD will no longer be asked to add this account. You can send a new request later if you change your mind.",
+      [
+        { text: 'Keep it', style: 'cancel' },
+        {
+          text: 'Withdraw',
+          style: 'destructive',
+          onPress: () => {
+            setBusy(true);
+            void cancelLinkRequest(request.id)
+              .then(onChanged)
+              .catch(() =>
+                Alert.alert(
+                  'Could not withdraw',
+                  "We couldn't reach TWD just now. The request still stands — try again in a moment.",
+                  [{ text: 'OK' }]
+                )
+              )
+              .finally(() => setBusy(false));
+          },
+        },
+      ]
+    );
+  };
+
+  return (
+    <ThemedView type="backgroundElement" style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardHeaderText}>
+          <ThemedText type="defaultBold" style={styles.cardTitle}>
+            {request.accountNumber}
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            Sent {formatDate(request.submittedAt)}
+          </ThemedText>
+        </View>
+        <LinkRequestBadge status={request.status} />
+      </View>
+
+      {request.note && (
+        <ThemedText type="small" themeColor="textSecondary" style={styles.address}>
+          Your note: {request.note}
+        </ThemedText>
+      )}
+
+      {/* Rejection carries no reason because the server sends none — telling a
+          consumer *why* would confirm the account exists and is held by someone
+          else, which is the fact this whole flow refuses to disclose. The office can
+          say more to a person standing in front of them. */}
+      {request.status === 'rejected' && (
+        <ThemedText type="small" themeColor="textSecondary" style={styles.address}>
+          TWD did not add this account. Visit the district office with a valid ID if you
+          think this is a mistake.
+        </ThemedText>
+      )}
+
+      {request.status === 'approved' && (
+        <ThemedText type="small" themeColor="textSecondary" style={styles.address}>
+          TWD approved this. The account appears above once staff have finished adding it.
+        </ThemedText>
+      )}
+
+      {request.status === 'pending' && (
+        <TwdButton
+          label="Withdraw request"
+          variant="secondary"
+          busy={busy}
+          busyLabel="Withdrawing…"
+          onPress={confirmCancel}
+          accessibilityHint={`Asks you to confirm before withdrawing your request for ${request.accountNumber}`}
+        />
+      )}
+    </ThemedView>
   );
 }
 
@@ -314,9 +473,16 @@ function DetailRow({
  * has. What it did not show was the balance. A consumer looking at their accounts
  * wants to know which one owes money; that took a trip to another tab.
  */
-function AccountCard({ account, onUnlinked }: { account: Account; onUnlinked: () => void }) {
+/** The three rate classes the registry stores, worded for a consumer. */
+const ACCOUNT_TYPE_LABEL: Record<Account['type'], string> = {
+  residential: 'Residential',
+  commercial: 'Commercial',
+  government: 'Government',
+};
+
+function AccountCard({ account }: { account: Account }) {
   const theme = useTwdTheme();
-  const [busy, setBusy] = useState(false);
+  const router = useRouter();
 
   /**
    * The balance comes from the server, not from filtering bills by account.
@@ -344,52 +510,33 @@ function AccountCard({ account, onUnlinked }: { account: Account; onUnlinked: ()
         : theme.success;
 
   /**
-   * Unlink asks first, and says what is lost.
+   * "This isn't my account" — a report, not an unlink.
    *
-   * It previously had no `onPress` at all — a red button that did nothing. Once
-   * wired it is genuinely destructive: unlinking drops this account's billing
-   * history from the consumer's view, and an outstanding balance does not go with
-   * it. The bill stays owed whether or not it is visible, which is exactly the
-   * misunderstanding a confirmation has to head off.
+   * The button here was Unlink, and it has to go rather than be re-wired. It called
+   * DELETE /accounts/:accountNumber, which removed the caller from
+   * `Account.consumerIds` — a field nothing reads now that the list is sourced from
+   * the district's `serviceconnections` registry. The account came back on the next
+   * refresh, after the app had said it was removed. The server refuses it outright
+   * for that reason (403), and the registry is read-only from the mobile backend by
+   * design, so there is no version of this button that could work.
+   *
+   * What a consumer actually needs from it is unchanged: a way to say "this record
+   * is wrong". That is a message to the office, so it opens the feedback form with
+   * the account number already filled in — prefilled rather than posted silently,
+   * because the consumer should see and be able to edit what goes to the district in
+   * their name.
    */
-  const confirmUnlink = () => {
-    // An unknown balance warns too. Staying silent would imply "nothing owed" on
-    // exactly the accounts we cannot vouch for.
-    const balanceWarning = owes
-      ? `This account still owes ${formatPeso(outstanding)}. Unlinking does not cancel the bill — it stays due, you just won't see it here.\n\n`
-      : !known
-        ? "This account may still have a balance. Unlinking does not cancel any bill — it stays due, you just won't see it here.\n\n"
-        : '';
-
-    Alert.alert(
-      `Unlink ${account.accountNumber}?`,
-      // Relinking is no longer self-service: the server refuses it (403) until the
-      // district defines a verification workflow. Promising "you can link it again
-      // with the account number from your bill" would be a lie that costs the
-      // consumer a trip to the office to undo.
-      `${balanceWarning}You'll lose access to this account's billing history in the app. ` +
-        'Re-linking has to be done at the TWD office with a valid ID.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Unlink',
-          style: 'destructive',
-          onPress: () => {
-            setBusy(true);
-            void unlinkAccount(account.accountNumber)
-              .then(onUnlinked)
-              .catch(() =>
-                Alert.alert(
-                  'Could not unlink',
-                  'We couldn\'t reach TWD just now. The account is still linked — try again in a moment.',
-                  [{ text: 'OK' }]
-                )
-              )
-              .finally(() => setBusy(false));
-          },
-        },
-      ]
-    );
+  const reportNotMine = () => {
+    router.push({
+      pathname: '/consumer/notices/feedback',
+      params: {
+        type: 'other',
+        subject: `${account.accountNumber} is not my account`,
+        message:
+          `The water account ${account.accountNumber} appears in my app, but it isn't mine. ` +
+          'Please check my records and remove it.',
+      },
+    });
   };
 
   return (
@@ -397,13 +544,16 @@ function AccountCard({ account, onUnlinked }: { account: Account; onUnlinked: ()
       <View style={styles.cardHeader}>
         {/* 🏠 / 🏢 previously, at fontSize 24 — a different vendor's artwork on
             every OS, ignoring the theme, announced by screen readers as "house". */}
-        <Icon name={account.type === 'commercial' ? 'building' : 'home'} size={24} color={theme.primary} />
+        <Icon name={account.type === 'residential' ? 'home' : 'building'} size={24} color={theme.primary} />
         <View style={styles.cardHeaderText}>
           <ThemedText type="defaultBold" style={styles.cardTitle}>
             {account.accountNumber}
           </ThemedText>
+          {/* Through the map, not a ternary. The old `=== 'commercial' ? … : 'Residential'`
+              printed "Residential" for a government account, and the district has
+              live government connections — a real one is ACC-2026-0005. */}
           <ThemedText type="small" themeColor="textSecondary">
-            {account.type === 'commercial' ? 'Commercial' : 'Residential'}
+            {ACCOUNT_TYPE_LABEL[account.type] ?? 'Residential'}
           </ThemedText>
         </View>
         <AccountStatusBadge status={account.status} />
@@ -422,13 +572,14 @@ function AccountCard({ account, onUnlinked }: { account: Account; onUnlinked: ()
         </ThemedText>
       </View>
 
+      {/* Secondary, not danger. Reporting a wrong record destroys nothing — the red
+          treatment belonged to the Unlink this replaces, and keeping it would warn
+          a consumer away from the one action that gets the mistake fixed. */}
       <TwdButton
-        label="Unlink"
-        variant="danger"
-        busy={busy}
-        busyLabel="Unlinking…"
-        onPress={confirmUnlink}
-        accessibilityHint={`Asks you to confirm before removing ${account.accountNumber} from your profile`}
+        label="This isn't my account"
+        variant="secondary"
+        onPress={reportNotMine}
+        accessibilityHint={`Opens a message to TWD about ${account.accountNumber}, which you can edit before sending`}
       />
     </ThemedView>
   );
@@ -490,22 +641,11 @@ function SettingsSection() {
   );
 }
 
-/**
- * Linking is not built.
- *
- * POST /accounts/link exists and is Consumer-gated, so this is a form away — but a
- * form is a screen with validation, a not-found path, an already-linked path, and
- * the 409 the server returns at the 5-account cap. The old button was
- * `onPress={() => {}}`: a tap that did nothing at all, which is the one outcome
- * worse than saying so.
- */
-function promptLinkNotBuilt() {
-  Alert.alert(
-    'Not available yet',
-    'Linking an account from the app is coming soon. For now, visit the TWD office with a valid ID and your account number, and staff will link it for you.',
-    [{ text: 'OK' }]
-  );
-}
+/* `promptLinkNotBuilt` was here — an alert saying linking was "coming soon", behind
+   a button on a screen that showed no accounts at all. Both are gone: the accounts
+   were always there, in `serviceconnections`, and the app was reading the wrong
+   join. When the office-approval flow lands, its entry point replaces the note at
+   the foot of AccountsSection. */
 
 const styles = StyleSheet.create({
   countRow: {

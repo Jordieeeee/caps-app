@@ -1,17 +1,84 @@
 const Account = require('../models/Account');
+const AccountLinkRequest = require('../models/AccountLinkRequest');
 const Consumer = require('../models/Consumer');
+const Feedback = require('../models/Feedback');
 const MeterReading = require('../models/MeterReading');
 const ServiceConnection = require('../models/ServiceConnection');
 const httpError = require('../utils/httpError');
 const ErrorCodes = require('../utils/errorCodes');
-const { withPaymentSummary } = require('../utils/accountPaymentSummary');
+const { attributableBalance } = require('../utils/accountPaymentSummary');
 const { barangayOf, summarise } = require('../utils/barangay');
 const { displayName } = require('../utils/consumerIdentity');
 const { formatAddress } = require('../utils/address');
 
+/**
+ * GET /accounts — the caller's own water accounts.
+ *
+ * ⚠️ THE LINK BETWEEN A PERSON AND A METER IS `serviceconnections`, NOT
+ * `Account.consumerIds`. This query used to be `Account.find({ consumerIds: sub })`
+ * and it returned `[]` for every real login in the district's database — all ten
+ * `consumerIds` references point at consumer documents that do not exist, leftovers
+ * from this repo's own seed script (see models/Account.js). Meanwhile the portal
+ * records ownership in `serviceconnections`, keyed on `accountNo`, and does so
+ * correctly for every consumer it has registered.
+ *
+ * The visible symptom was a consumer who owns a meter being shown "Link your first
+ * account" — the app asking them to establish a link the district had already made.
+ * `GET /accounts/route` below was migrated to this same spine when the collector's
+ * route list had the same defect; this endpoint was missed.
+ *
+ * Scoped to `req.user.sub` with no caller-supplied parameter, which is the property
+ * that matters most here: the previous `GET /billing/:accountNumber` shape let any
+ * logged-in consumer read any household's data, and account numbers are sequential
+ * and printed on every bill. There is nothing to tamper with in this query.
+ *
+ * `accounts` is a decoration, not the spine — it supplies the rate class and the
+ * on-the-books status where a matching document happens to exist. A connection with
+ * no account document is still the consumer's meter and is still returned.
+ */
 exports.listMine = async (req, res) => {
-  const accounts = await Account.findByConsumer(req.user.sub);
-  res.json({ accounts: await Promise.all(accounts.map((a) => withPaymentSummary(a.toObject()))) });
+  const connections = await ServiceConnection.find({ consumerId: req.user.sub }).lean();
+  const accountNumbers = connections.map((c) => c.accountNo).filter(Boolean);
+
+  const accounts = await Account.find({ accountNumber: { $in: accountNumbers } }).lean();
+  const accountByNumber = new Map(accounts.map((a) => [a.accountNumber, a]));
+
+  /**
+   * One balance, resolved once and applied to each row.
+   *
+   * The bills belong to the consumer rather than to any one meter, so this is a
+   * single fact about the caller — not something to re-derive per account. See
+   * utils/accountPaymentSummary.js for why holding several accounts makes it
+   * unattributable rather than divisible.
+   */
+  const balance = await attributableBalance(req.user.sub, connections.length);
+
+  const rows = connections.map((connection) => {
+    const account = accountByNumber.get(connection.accountNo) || null;
+
+    return {
+      // The connection, not the account: one row is one meter, and a connection
+      // exists for every row here while an account document may not.
+      id: String(connection._id),
+      accountNumber: connection.accountNo || '',
+      // The service address — where the meter is. `Consumer.mailingAddress` is where
+      // the bill goes, and for a landlord or a business those are different places.
+      address: formatAddress(connection.serviceAddress) || (account ? account.address : '') || '',
+      type: (account ? account.type : connection.accountType) || 'residential',
+      status: account ? account.status : 'active',
+      /**
+       * When the district connected the meter, which is the honest answer to "since
+       * when is this mine". The old `Account.linkedDate` was the seed script's
+       * record-creation date and is meaningless against live data.
+       */
+      linkedDate: connection.dateConnected ? connection.dateConnected.toISOString() : undefined,
+      ...balance,
+    };
+  });
+
+  rows.sort((a, b) => a.accountNumber.localeCompare(b.accountNumber));
+
+  res.json({ accounts: rows });
 };
 
 
@@ -197,31 +264,230 @@ exports.listRoute = async (req, res) => {
  * check needs something only the account holder has, and choosing it is the
  * district's call, not this file's.
  *
- * ⚠️ PRODUCT DECISION REQUIRED. This is consistent with the decided model in the
- * meantime: consumer logins are already created by TWD office staff with no
- * self-signup, so account linking happening at the same counter is not a new
- * burden. Options for the district:
- *   1. Office-only linking (status quo here) — staff link at the counter on ID.
- *   2. In-app request → office approval queue — consumer submits, staff confirm.
- *   3. Shared-secret challenge — e.g. exact amount of a recent payment, which is
- *      NOT on the bill. Weakest of the three; still guessable for round amounts.
+ * ✅ RESOLVED — the district chose the approval queue. `POST /accounts/link-requests`
+ * above is that workflow: the consumer asks, staff verify identity at the office or
+ * against their records, and staff make the link in the portal. Nothing about this
+ * endpoint changed, because the answer to "attach this account right now, on the
+ * caller's say-so" is still no.
+ *
+ * Kept rather than deleted so that an older app build still installed on someone's
+ * phone gets a 403 with an explanation instead of a 404 it would report as
+ * "something went wrong". Remove it once no such build is in the field.
  */
 exports.link = async (req, res) => {
   throw httpError(
     403,
-    'Water accounts are linked by TWD office staff. Please visit the Tanauan City ' +
-      'Water District office with a valid ID to link an account.',
+    'Water accounts are linked by TWD office staff. Update the app to request an ' +
+      'account from your phone, or visit the Tanauan City Water District office with a valid ID.',
     ErrorCodes.NOT_SUPPORTED
   );
 };
 
+/* ------------------------------------------------------------------ *
+ * Link requests — the consumer asks, the office decides.
+ * ------------------------------------------------------------------ */
+
+/** Pending requests one consumer may have open at once. */
+const MAX_PENDING_REQUESTS = 5;
+
 /**
- * Unlinking stays open: it only ever removes the caller's own id from an account,
- * so the worst case is a consumer losing sight of their own bill, which they can
- * fix at the office. No one else's data is reachable through it.
+ * Shape only — deliberately not the district's numbering rule.
+ *
+ * Live account numbers look like `ACC-2026-0001`, but pinning that pattern in here
+ * would reject every account the district issues after it changes its scheme, and
+ * the app would be the reason a consumer could not ask about their own meter. This
+ * rejects what is obviously not an account number (empty, a sentence, punctuation)
+ * and lets the office judge the rest — which is the whole point of the workflow.
+ */
+const ACCOUNT_NUMBER_SHAPE = /^[A-Z0-9][A-Z0-9-]{3,31}$/;
+
+/**
+ * One request as the consumer sees it.
+ *
+ * ⚠️ `decidedBy` IS NEVER SENT, and neither is any staff-written reason — this
+ * response has no field for one, on purpose. "Rejected: that account belongs to
+ * someone else" would confirm both that the account exists and that it is held,
+ * which is exactly the fact `createLinkRequest` below refuses to disclose. A
+ * rejected consumer is pointed at the office, where staff can say as much as the
+ * person in front of them is entitled to hear.
+ */
+function presentRequest(doc) {
+  return {
+    id: String(doc._id),
+    accountNumber: doc.accountNumber,
+    note: doc.note || null,
+    status: doc.status,
+    submittedAt: doc.createdAt.toISOString(),
+    decidedAt: doc.decidedAt ? doc.decidedAt.toISOString() : null,
+  };
+}
+
+/**
+ * POST /accounts/link-requests — ask TWD to add an account to this profile.
+ *
+ * ⚠️ THE SECURITY PROPERTY IS THAT THIS TELLS THE CALLER NOTHING. It does not look
+ * the account number up. A request for `ACC-2026-0001`, for `ACC-9999-9999`, and for
+ * an account belonging to a stranger all produce the identical 201 and the identical
+ * body. That is what makes it safe to expose at all: account numbers are sequential
+ * and printed on every bill posted through a door, so an endpoint that answered
+ * "no such account" would hand over a customer-base enumeration one request at a
+ * time — the exact hole that closed `POST /accounts/link` (403, below).
+ *
+ * Anything this *does* refuse is a fact about the caller's own profile, which they
+ * can already see: that the account is theirs already, or that they have too many
+ * requests open. Neither reveals anything about anyone else.
+ *
+ * The cost of not checking is that staff receive typos. That is the correct place
+ * for the cost to land — a wrong number wastes a moment at the counter, whereas an
+ * accurate "that account exists" reply is permanent and copyable.
+ */
+exports.createLinkRequest = async (req, res) => {
+  const accountNumber = String(req.body.accountNumber).trim().toUpperCase();
+  const rawNote = typeof req.body.note === 'string' ? req.body.note.trim() : '';
+  const note = rawNote ? rawNote.slice(0, 500) : undefined;
+
+  if (!ACCOUNT_NUMBER_SHAPE.test(accountNumber)) {
+    throw httpError(
+      400,
+      'Enter the account number exactly as printed on your TWD bill, for example ACC-2026-0001.'
+    );
+  }
+
+  // Already theirs — safe to say, it is their own record. Checked against the
+  // portal's registry, the same source GET /accounts reads.
+  const alreadyMine = await ServiceConnection.findOne({
+    consumerId: req.user.sub,
+    accountNo: accountNumber,
+  }).lean();
+  if (alreadyMine) {
+    throw httpError(409, `${accountNumber} is already on your profile.`);
+  }
+
+  const pending = await AccountLinkRequest.countPending(req.user.sub);
+  if (pending >= MAX_PENDING_REQUESTS) {
+    throw httpError(
+      409,
+      `You already have ${MAX_PENDING_REQUESTS} requests waiting with TWD. Please wait for ` +
+        'those to be reviewed, or visit the district office.'
+    );
+  }
+
+  let request;
+  try {
+    request = await AccountLinkRequest.create({
+      consumerId: req.user.sub,
+      accountNumber,
+      note,
+    });
+  } catch (err) {
+    /**
+     * The partial unique index fired: this consumer already has a pending request
+     * for this account. Returning that one is the honest answer to "please ask TWD
+     * about this account" — it has been asked — and it keeps a double-tap from
+     * putting the same job in the queue twice.
+     */
+    if (err && err.code === 11000) {
+      const existing = await AccountLinkRequest.findOne({
+        consumerId: req.user.sub,
+        accountNumber,
+        status: 'pending',
+      });
+      if (existing) return res.status(200).json({ request: presentRequest(existing) });
+    }
+    throw err;
+  }
+
+  await notifyOffice(req.user.sub, accountNumber, note);
+
+  res.status(201).json({ request: presentRequest(request) });
+};
+
+/**
+ * ⚠️ BRIDGE, REMOVE WHEN THE PORTAL HAS ITS OWN QUEUE.
+ *
+ * `accountlinkrequests` is a new collection and the Admin Portal has no screen that
+ * reads it yet. Without this, the app would tell a consumer "TWD has your request"
+ * while no TWD screen anywhere would show it — a silent disappearance, which is the
+ * one outcome the feedback flow was rewritten to prevent (see feedbackController).
+ *
+ * So the request also lands in `feedbacks`, which staff already triage today, and
+ * which the consumer can already follow under Notices → Your feedback. The
+ * structured record above stays the system of record; this is a copy that makes it
+ * visible. Delete this function and its call the day the portal's queue ships.
+ *
+ * Failure here is swallowed on purpose: the request itself is already stored, and
+ * throwing would tell the consumer their request failed when it did not.
+ */
+async function notifyOffice(consumerId, accountNumber, note) {
+  try {
+    await Feedback.create({
+      consumerId,
+      type: 'other',
+      subject: `Account link request: ${accountNumber}`,
+      message:
+        `This consumer is asking for water account ${accountNumber} to be added to their ` +
+        `app profile.${note ? `\n\nTheir note: ${note}` : ''}\n\n` +
+        'Verify their identity before linking, then make the link in the Admin Portal.',
+    });
+  } catch {
+    // Already recorded in accountlinkrequests; the copy is a convenience.
+  }
+}
+
+/** GET /accounts/link-requests — the caller's own, newest first. */
+exports.listLinkRequests = async (req, res) => {
+  const requests = await AccountLinkRequest.listByConsumer(req.user.sub);
+  res.json({ requests: requests.map(presentRequest) });
+};
+
+/**
+ * DELETE /accounts/link-requests/:id — withdraw a request that is still pending.
+ *
+ * Ownership is part of the query rather than a check after the read: a
+ * `findById` followed by an `if` is one early return away from letting a consumer
+ * cancel a stranger's request, and there is no version of this query that can match
+ * a row belonging to someone else. `status: 'pending'` is in there for the same
+ * reason — a decided request is a record of what the office did, not the consumer's
+ * to erase.
+ */
+exports.cancelLinkRequest = async (req, res) => {
+  const request = await AccountLinkRequest.findOneAndUpdate(
+    { _id: req.params.id, consumerId: req.user.sub, status: 'pending' },
+    { $set: { status: 'cancelled' } },
+    { new: true }
+  );
+
+  if (!request) {
+    throw httpError(404, 'That request no longer exists, or TWD has already reviewed it.');
+  }
+
+  res.json({ request: presentRequest(request) });
+};
+
+/**
+ * Unlinking is CLOSED too, and for a structural reason rather than a security one.
+ *
+ * It used to `$pull` the caller's id out of `Account.consumerIds` and return 200.
+ * Now that `listMine` reads ownership from `serviceconnections` — the collection the
+ * portal actually maintains — that write changes nothing anyone reads: the account
+ * would come straight back on the next refresh, after the app had told the consumer
+ * it was gone. A 200 that does not do what it says is worse than a refusal.
+ *
+ * It cannot simply be repointed at the connection either. `serviceconnections` is
+ * the portal's registry and is READ-ONLY from this backend by design — the model
+ * declares a narrow schema under `strict: true` specifically so this codebase cannot
+ * alter it, even by accident (see models/ServiceConnection.js). Detaching a consumer
+ * from a meter is a counter transaction in the district's records, not a button.
+ *
+ * The app now offers "This isn't my account" instead, which files feedback for the
+ * office to correct. That is the honest shape: the consumer reports, the district
+ * decides. See app-frontend/src/app/consumer/account/index.tsx.
  */
 exports.unlink = async (req, res) => {
-  const account = await Account.unlinkConsumer(req.params.accountNumber, req.user.sub);
-  if (!account) throw httpError(404, 'Account not found');
-  res.json({ account: await withPaymentSummary(account.toObject()) });
+  throw httpError(
+    403,
+    'Water accounts are linked and unlinked by TWD office staff. If an account ' +
+      "shown here isn't yours, report it from the app and the district will correct it.",
+    ErrorCodes.NOT_SUPPORTED
+  );
 };
