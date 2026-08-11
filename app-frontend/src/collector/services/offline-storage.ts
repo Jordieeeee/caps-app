@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-interface MeterReading {
+export interface MeterReading {
   id: string;
   routeId: string;
   collectorId: string;
@@ -84,6 +84,39 @@ export class OfflineStorage {
   static async getUnsyncedMeterReadings(): Promise<MeterReading[]> {
     const readings = await this.getMeterReadings();
     return readings.filter(r => !r.synced);
+  }
+
+  /**
+   * Add readings TWD already holds, without queueing them to be sent back.
+   *
+   * Deliberately not `saveMeterReading` in a loop. That method appends *and* pushes
+   * onto the sync queue, which is right for a reading taken at a meter and exactly
+   * wrong for one that arrived from the server: it would put records the server just
+   * gave us back into the outbox to be uploaded again, and the pending count on Home
+   * — the number a collector checks before signing out — would jump by the size of
+   * their own history.
+   *
+   * Existing ids win, always. A local record is either unsynced work that has not
+   * reached TWD yet or a synced copy of the same fact; in neither case is the
+   * server's version worth overwriting a collector's phone with. So this only adds
+   * ids the phone has never seen, and can never edit or delete what is already here.
+   */
+  static async mergeSyncedMeterReadings(incoming: MeterReading[]): Promise<number> {
+    try {
+      const existing = await this.getMeterReadings();
+      const known = new Set(existing.map((r) => r.id));
+      const additions = incoming.filter((r) => !known.has(r.id));
+      if (additions.length === 0) return 0;
+
+      await AsyncStorage.setItem(
+        STORAGE_KEYS.METER_READINGS,
+        JSON.stringify([...existing, ...additions])
+      );
+      return additions.length;
+    } catch (error) {
+      console.error('Error merging meter readings:', error);
+      return 0;
+    }
   }
 
   static async markMeterReadingSynced(id: string): Promise<void> {

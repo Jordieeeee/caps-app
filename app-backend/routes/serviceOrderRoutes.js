@@ -12,6 +12,17 @@ router.post(
   requireFields('clientId', 'type', 'accountNumber'),
   asyncHandler(sync)
 );
-router.get('/', asyncHandler(list));
+
+/**
+ * Staff-only. Deliberately NOT scoped to one collector, unlike GET /readings.
+ *
+ * Orders are unassigned work: the app's Reconnections and Disconnections lists show
+ * every open order so whoever is nearest can take one, and there is no `collectorId`
+ * on the document to narrow by. The controller joins each order to `consumers` and
+ * `serviceconnections` to name the household, so this response carries names and
+ * addresses — which is exactly why it must not stay open to a Consumer token, as it
+ * was until now.
+ */
+router.get('/', requireRole('Collector', 'Admin'), asyncHandler(list));
 
 module.exports = router;

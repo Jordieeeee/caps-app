@@ -1,10 +1,19 @@
 import { useRouter } from 'expo-router';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { listNotices, type Notice } from '@/consumer/services/consumer-data';
+import {
+  listNotices,
+  listNotifications,
+  markNotificationRead,
+  type Notice,
+  type Notification,
+  type NotificationKind,
+} from '@/consumer/services/consumer-data';
+import { formatPeso } from '@/shared/format/currency';
+import { formatDate } from '@/shared/format/date';
 import { Icon, type IconName } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
 import { RefreshButton, RefreshFailedNotice } from '@/shared/components/refresh-button';
@@ -31,15 +40,56 @@ export default function ConsumerNoticesScreen() {
     useCallback(() => listNotices(), [])
   );
 
+  /**
+   * The consumer's own messages, loaded separately from the district's notices.
+   *
+   * Two `useAsync` calls rather than one combined fetch, because the two lists fail
+   * independently and only one of them is what this screen is for. A notices load
+   * that succeeds must still render when `/notifications` is unreachable; merging
+   * them into a single promise would make either failure blank the whole screen.
+   */
+  const inbox = useAsync(useCallback(() => listNotifications(), []));
+
+  const refreshAll = useCallback(() => {
+    void refresh();
+    void inbox.refresh();
+  }, [refresh, inbox]);
+
   return (
-    <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
+    <ScreenContainer onRefresh={refreshAll} refreshing={refreshing || inbox.refreshing}>
       <ScreenHeader
         title="Notices"
         subtitle="Service updates from Tanauan City Water District"
-        action={
-          <RefreshButton onPress={() => void refresh()} busy={refreshing} subject="notices" />
-        }
+        action={<RefreshButton onPress={refreshAll} busy={refreshing} subject="notices" />}
       />
+
+      {/* Addressed to this consumer, so it sits above everything the district
+          published to everyone.
+
+          RENDERED ONLY WHEN THERE IS SOMETHING IN IT, and there will not be for a
+          while: `consumernotifications` has no writer yet (see
+          app-backend/models/Notification.js). A permanent "No messages" panel at the
+          top of the screen would cost every consumer a scroll, every visit, to be
+          told nothing — and an empty state is worth showing only where its absence
+          would leave someone wondering whether the screen had loaded. Nobody comes
+          to Notices looking for an inbox they have never seen.
+
+          A failed load renders nothing for the same reason, and deliberately gets no
+          error banner: there is no action behind it, and a red row about messages
+          that do not exist would be alarming and untrue. The notices list below
+          keeps its own `RefreshFailedNotice`, because that one is about content the
+          consumer came here for. */}
+      {inbox.state.status === 'ready' && inbox.state.data.length > 0 && (
+        <ScreenSection gap={Spacing.three}>
+          {inbox.state.data.map((notification) => (
+            <NotificationCard
+              key={notification.id}
+              notification={notification}
+              onRead={inbox.refresh}
+            />
+          ))}
+        </ScreenSection>
+      )}
 
       {/* See bills/index.tsx — only meaningful next to rows we are still showing. */}
       {state.status === 'ready' && refreshFailed && <RefreshFailedNotice subject="notices" />}
@@ -107,6 +157,120 @@ export default function ConsumerNoticesScreen() {
         </ScreenSection>
       )}
     </ScreenContainer>
+  );
+}
+
+/**
+ * Icon per kind. Silhouettes, not colours — same reasoning as NoticeCard below.
+ *
+ * `announcement` reuses the megaphone the notices carry, because a district
+ * announcement sent to one household is the same kind of thing as one posted to
+ * everybody; only the delivery differs.
+ */
+const KIND_ICON: Record<NotificationKind, IconName> = {
+  'due-reminder': 'calendar',
+  'payment-confirmation': 'file-check',
+  'service-alert': 'alert-triangle',
+  announcement: 'megaphone',
+};
+
+/**
+ * One message addressed to this consumer.
+ *
+ * Tapping marks it read, and the row is a button only while it is unread — a read
+ * notification has nothing left to do, and leaving it pressable invites a tap that
+ * appears to do nothing. The card does not navigate anywhere: there is no detail
+ * view behind a message that is already one sentence long.
+ *
+ * The optimistic update is deliberately absent. Marking read locally and reverting
+ * on failure would flicker an unread dot back into view seconds later; here the row
+ * simply stays unread until TWD has actually recorded that it was read, which is
+ * the same rule the collector's sync obeys about not claiming a record has landed.
+ *
+ * `amount` and `dueDate` render only when the server sent them. A `due-reminder`
+ * missing its figure shows no figure — never ₱0.00, which is a claim that the
+ * household owes nothing (see the `Account.outstanding` comment in consumer/types.ts).
+ */
+function NotificationCard({
+  notification,
+  onRead,
+}: {
+  notification: Notification;
+  onRead: () => void;
+}) {
+  const theme = useTwdTheme();
+  const [busy, setBusy] = useState(false);
+  const unread = !notification.read;
+
+  const markRead = () => {
+    if (!unread || busy) return;
+    setBusy(true);
+    void markNotificationRead(notification.id)
+      .then(onRead)
+      .catch(() => {
+        // Stays unread, which is the truth: TWD did not record the read. No alert —
+        // the consumer did not ask for anything, so there is nothing to report.
+      })
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <Pressable
+      onPress={markRead}
+      disabled={!unread || busy}
+      accessibilityRole={unread ? 'button' : undefined}
+      accessibilityLabel={
+        unread ? `Unread: ${notification.message}. Tap to mark as read.` : notification.message
+      }
+      style={({ pressed }) => [
+        styles.card,
+        {
+          borderColor: unread ? theme.primary : theme.border,
+          borderWidth: unread ? 3 : 2,
+          backgroundColor:
+            pressed && unread ? theme.backgroundSelected : theme.backgroundElement,
+        },
+      ]}>
+      <View style={styles.notificationHeader}>
+        <Icon
+          name={KIND_ICON[notification.kind]}
+          size={20}
+          color={unread ? theme.primary : theme.textSecondary}
+        />
+        {unread && (
+          <View
+            style={[styles.unreadDot, { backgroundColor: theme.primary }]}
+            accessibilityElementsHidden
+          />
+        )}
+        <ThemedText type="small" themeColor="textSecondary" style={styles.notificationDate}>
+          {formatDate(notification.createdAt)}
+        </ThemedText>
+      </View>
+
+      <ThemedText type={unread ? 'defaultBold' : 'default'} style={styles.content}>
+        {notification.message}
+      </ThemedText>
+
+      {(notification.amount !== null || notification.dueDate !== null) && (
+        <View style={[styles.footer, { borderTopColor: theme.border }]}>
+          {notification.amount !== null && (
+            <ThemedText type="defaultBold">{formatPeso(notification.amount)}</ThemedText>
+          )}
+          {notification.dueDate !== null && (
+            <ThemedText type="small" themeColor="textSecondary">
+              Due {formatDate(notification.dueDate)}
+            </ThemedText>
+          )}
+        </View>
+      )}
+
+      {notification.accountNumber !== null && (
+        <ThemedText type="small" themeColor="textSecondary">
+          {notification.accountNumber}
+        </ThemedText>
+      )}
+    </Pressable>
   );
 }
 
@@ -238,6 +402,10 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   headerText: { gap: Spacing.two, alignItems: 'flex-start' },
+  notificationHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  // Pushes the date to the trailing edge without a spacer view.
+  notificationDate: { marginLeft: 'auto' },
+  unreadDot: { width: 8, height: 8, borderRadius: 4 },
   cardTitle: { fontSize: 17, lineHeight: 24 },
   content: { lineHeight: 21 },
   footer: {

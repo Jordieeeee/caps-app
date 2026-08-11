@@ -42,6 +42,24 @@ export default function CollectorLayout() {
     return () => SyncService.stopSyncMonitoring();
   }, [isCollector]);
 
+  /**
+   * Recover this collector's history onto a phone that does not have it.
+   *
+   * Runs once per collector session, here rather than on any one screen, because the
+   * screens that need the records (Daily Summary, Reports) are exactly the ones that
+   * would otherwise render an empty state first and fill in underneath the reader.
+   *
+   * It no-ops in every normal case: a phone with its own history already knows every
+   * id, and a phone with unsent work is left strictly alone. The case it exists for
+   * is the reinstall — see SyncService.hydrateHistory. Not awaited and not surfaced;
+   * a collector who has signed in wants their route, not a progress bar about the
+   * past, and `startSyncMonitoring` above must not wait on a network round trip.
+   */
+  useEffect(() => {
+    if (!isCollector) return;
+    void SyncService.hydrateHistory();
+  }, [isCollector]);
+
   if (!isCollector) {
     return <Redirect href="/" />;
   }

@@ -91,6 +91,44 @@ export interface Notice {
   priority: NoticePriority;
 }
 
+/**
+ * What a notification is about. Drives the icon and the wording, not the styling.
+ *
+ * Mirrors the `kind` enum in app-backend/models/Notification.js exactly. Kept as a
+ * separate union from `NoticeType` even though both describe "a thing TWD is
+ * telling you": a Notice is published to the whole district, a Notification is
+ * addressed to one consumer and can carry their money on it.
+ */
+export type NotificationKind =
+  | 'due-reminder'
+  | 'payment-confirmation'
+  | 'service-alert'
+  | 'announcement';
+
+/**
+ * One message addressed to this consumer, as GET /notifications presents it.
+ *
+ * ⚠️ THIS LIST IS EMPTY TODAY AND THAT IS CORRECT. `consumernotifications` has no
+ * writer yet — see app-backend/models/Notification.js. The screen must render an
+ * empty state that says so, and must never fall back to fixtures to look populated.
+ *
+ * `amount` and `dueDate` arrive as explicit nulls rather than being omitted, so a
+ * `due-reminder` that is missing its figure is visibly missing it rather than
+ * silently rendering as ₱0.00 — the same rule `Account.outstanding` follows.
+ */
+export interface Notification {
+  id: string;
+  kind: NotificationKind;
+  message: string;
+  accountNumber: string | null;
+  amount: number | null;
+  /** `YYYY-MM-DD` as the server stores it, or null. */
+  dueDate: string | null;
+  read: boolean;
+  /** ISO 8601. */
+  createdAt: string;
+}
+
 export interface MailingAddress {
   houseStreet: string | null;
   barangay: string | null;

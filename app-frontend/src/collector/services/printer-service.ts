@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { PermissionsAndroid, Platform, type Permission } from 'react-native';
 
 /**
  * Types only — `import type` is erased at compile time and emits no `require`.
@@ -32,6 +32,35 @@ import { PrinterStore } from './printer-state';
 export const BLE_UNAVAILABLE_MESSAGE =
   'Receipt printing needs a development build of the app. Expo Go cannot use Bluetooth, ' +
   'so the printer is unavailable here — everything else works normally.';
+
+/**
+ * Whether Android let us use the radio.
+ *
+ * Three outcomes rather than a boolean, because two of them are the collector's to
+ * fix and they have different fixes: `denied` is answered by tapping Allow the next
+ * time we ask, `blocked` (Android's "don't ask again") can only be undone in system
+ * settings, and no amount of retrying the scan will produce a dialog. Collapsing
+ * them into `false` is how a collector ends up tapping Scan repeatedly against a
+ * prompt that will never appear again.
+ */
+export type BlePermissionResult = 'granted' | 'denied' | 'blocked' | 'not-required';
+
+/** Thrown by scan/connect when Android refused the radio, so callers can branch. */
+export class BluetoothPermissionError extends Error {
+  constructor(readonly result: 'denied' | 'blocked') {
+    super(
+      result === 'blocked'
+        ? 'Bluetooth permission is turned off for this app.'
+        : 'Bluetooth permission was not granted.'
+    );
+    this.name = 'BluetoothPermissionError';
+  }
+}
+
+/** Narrowing helper — `instanceof` alone is unreliable across a Metro reload. */
+export function isBluetoothPermissionError(error: unknown): error is BluetoothPermissionError {
+  return error instanceof Error && error.name === 'BluetoothPermissionError';
+}
 
 /** Resolved once; `undefined` means "not attempted yet", `null` means "unavailable". */
 let bleModule: typeof import('react-native-ble-plx') | null | undefined;
@@ -123,11 +152,70 @@ export class PrinterService {
     return this.bleManager;
   }
 
+  /**
+   * Ask Android for the radio. THE REASON NO SCAN HAS EVER FOUND A PRINTER.
+   *
+   * `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` are runtime permissions on Android 12
+   * (API 31) and above — declaring them in the manifest grants nothing, and nothing
+   * in this app ever requested them. `startDeviceScan` therefore rejected on every
+   * modern handset before it ever reached the radio, and the printer screen reported
+   * a generic "Bluetooth search failed" that named neither the cause nor the fix.
+   *
+   * Below API 31 the scan permission did not exist yet and BLE scanning was gated on
+   * location instead, so `ACCESS_FINE_LOCATION` is what has to be asked for there.
+   * That split is why the manifest caps the location permissions at
+   * `maxSdkVersion="30"` (see the `neverForLocation` option on the ble-plx config
+   * plugin in app.json): on 12 and above we assert we do not use BLE to derive
+   * location, which is true — we talk to one printer — and in exchange the collector
+   * is never asked for their location to print a receipt.
+   *
+   * iOS asks by itself the first time CoreBluetooth is used, driven by
+   * `NSBluetoothAlwaysUsageDescription`, so there is nothing to request here and
+   * `not-required` is the honest answer rather than `granted`.
+   */
+  static async requestPermissions(): Promise<BlePermissionResult> {
+    if (Platform.OS !== 'android') return 'not-required';
+
+    const apiLevel = typeof Platform.Version === 'number' ? Platform.Version : Number(Platform.Version);
+
+    const wanted: Permission[] =
+      apiLevel >= 31
+        ? [
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          ]
+        : [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+
+    const granted = await PermissionsAndroid.requestMultiple(wanted);
+    const outcomes = wanted.map((permission) => granted[permission]);
+
+    if (outcomes.every((outcome) => outcome === PermissionsAndroid.RESULTS.GRANTED)) {
+      return 'granted';
+    }
+    // "Never ask again" on any one of them is terminal for the whole flow — the
+    // dialog will not come back, so the collector has to be sent to settings.
+    return outcomes.some((outcome) => outcome === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN)
+      ? 'blocked'
+      : 'denied';
+  }
+
+  /** Request, and throw the typed error if refused. Shared by scan and connect. */
+  private static async requirePermissions(): Promise<void> {
+    const result = await this.requestPermissions();
+    if (result === 'denied' || result === 'blocked') {
+      throw new BluetoothPermissionError(result);
+    }
+  }
+
   // Scan for printers
   static async scanForPrinters(durationSeconds: number = 10): Promise<Device[]> {
     if (!this.bleManager) {
       this.initialize();
     }
+
+    // Before the scan, not before `initialize` — constructing the manager is what
+    // triggers iOS's own prompt, and on Android it is the scan that needs the grant.
+    await this.requirePermissions();
 
     const devices: Device[] = [];
     
@@ -171,6 +259,16 @@ export class PrinterService {
     if (!this.bleManager) {
       this.initialize();
     }
+
+    /**
+     * Asked again here, and not only in `scanForPrinters`.
+     *
+     * `BLUETOOTH_CONNECT` is a separate grant from `BLUETOOTH_SCAN`, and a collector
+     * can arrive at this method without having scanned in this session — the
+     * reconnect path after the printer drops mid-route is exactly that. Where the
+     * grant already exists this resolves without showing anything.
+     */
+    await this.requirePermissions();
 
     PrinterStore.set({ status: 'connecting', deviceName: null, deviceId });
 

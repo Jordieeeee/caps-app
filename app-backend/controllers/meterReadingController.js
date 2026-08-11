@@ -13,10 +13,29 @@ exports.sync = async (req, res) => {
   res.json({ reading });
 };
 
+/**
+ * A collector's own readings — never the district's.
+ *
+ * This used to run `find({})` behind a bare `auth` with no `requireRole`, so any
+ * signed-in consumer could `GET /readings` with no query string and receive every
+ * meter reading TWD holds: account number, consumption and reading date for every
+ * household, unfiltered. That is the same hole the route file has now closed twice
+ * before — see the removed `/collections` in routes/index.js and the removed
+ * `GET /billing/:accountNumber` in routes/billingRoutes.js, which was an IDOR over
+ * sequential account numbers printed on every bill.
+ *
+ * The role gate lives on the route; the scoping lives here, and the two are not
+ * interchangeable. `collectorId` is forced from the token rather than read from a
+ * query parameter for the same reason `sync` above takes it from `req.user.sub` —
+ * a collector who can name another collector can read that collector's whole route.
+ * Admin is the one role that may look across collectors, because reconciling the
+ * district's readings is the job.
+ */
 exports.list = async (req, res) => {
   const filter = {};
   if (req.query.accountNumber) filter.accountNumber = req.query.accountNumber;
   if (req.query.routeId) filter.routeId = req.query.routeId;
+  if (req.user.role === 'Collector') filter.collectorId = req.user.sub;
   const readings = await MeterReading.listByFilter(filter);
   res.json({ readings });
 };

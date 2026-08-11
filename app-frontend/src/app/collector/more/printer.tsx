@@ -1,8 +1,12 @@
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { PrinterService } from '@/collector/services/printer-service';
+import {
+  PrinterService,
+  isBluetoothPermissionError,
+  type BlePermissionResult,
+} from '@/collector/services/printer-service';
 import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListLoading } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
@@ -13,6 +17,39 @@ import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
 interface FoundPrinter {
   id: string;
   name: string;
+}
+
+/**
+ * What to say when Android refuses the radio.
+ *
+ * The two cases need different instructions and only one of them can be fixed from
+ * inside the app. `denied` means the collector tapped Deny once — the dialog comes
+ * back, so "try again" is real advice. `blocked` is Android's "don't ask again":
+ * no prompt will ever appear again, so a Try again button would be a button that
+ * does nothing, and the only way through is the app's settings page.
+ *
+ * Both say what is *not* wrong, because the collector standing at a meter has no
+ * way to tell a permission problem from a broken printer, and the reflex is to go
+ * looking for the hardware fault.
+ */
+function alertPermission(result: Extract<BlePermissionResult, 'denied' | 'blocked'>) {
+  if (result === 'blocked') {
+    Alert.alert(
+      'Bluetooth access is turned off',
+      'This app is not allowed to use Bluetooth, so it cannot find the printer. Open app settings, allow "Nearby devices", then come back and search again.\n\nThere is nothing wrong with the printer.',
+      [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Open settings', onPress: () => void Linking.openSettings() },
+      ]
+    );
+    return;
+  }
+
+  Alert.alert(
+    'Bluetooth access is needed',
+    'TWD needs permission to use Bluetooth to find the PT-210 printer. It is only used to connect to the printer — it is never used for your location.\n\nTap Search again and choose Allow.',
+    [{ text: 'OK' }]
+  );
 }
 
 /**
@@ -46,12 +83,19 @@ export default function PrinterScreen() {
       PrinterService.initialize();
       const devices = await PrinterService.scanForPrinters(8);
       setFound(devices.map((d) => ({ id: d.id, name: d.name ?? 'Unnamed printer' })));
-    } catch {
-      Alert.alert(
-        'Could not search',
-        'Bluetooth search failed. Check that Bluetooth is turned on and that the app is allowed to use it, then try again.',
-        [{ text: 'OK' }]
-      );
+    } catch (error) {
+      // A refused permission is not a failed search, and telling a collector to
+      // "check that Bluetooth is turned on" when Bluetooth is on and the app was
+      // simply never allowed to use it sends them to the wrong setting entirely.
+      if (isBluetoothPermissionError(error)) {
+        alertPermission(error.result);
+      } else {
+        Alert.alert(
+          'Could not search',
+          'Bluetooth search failed. Check that Bluetooth is turned on, then try again.',
+          [{ text: 'OK' }]
+        );
+      }
     } finally {
       setScanning(false);
       setHasScanned(true);
@@ -64,12 +108,18 @@ export default function PrinterScreen() {
       await PrinterService.connectToDevice(printer.id);
       setConnected(true);
       setConnectedName(printer.name);
-    } catch {
-      Alert.alert(
-        'Could not connect',
-        `${printer.name} did not accept the connection. Make sure it is switched on and close to the phone, then try again.`,
-        [{ text: 'OK' }]
-      );
+    } catch (error) {
+      // Same split as the scan: connecting needs its own grant (BLUETOOTH_CONNECT),
+      // so this is reachable even after a scan that the collector did allow.
+      if (isBluetoothPermissionError(error)) {
+        alertPermission(error.result);
+      } else {
+        Alert.alert(
+          'Could not connect',
+          `${printer.name} did not accept the connection. Make sure it is switched on and close to the phone, then try again.`,
+          [{ text: 'OK' }]
+        );
+      }
     } finally {
       setConnectingId(null);
     }

@@ -19,6 +19,27 @@ export interface SyncResult {
 }
 
 /**
+ * A reading as `GET /readings` returns it.
+ *
+ * Separate from the local `MeterReading` because the two genuinely differ: the
+ * server keys on `clientId` and stamps its own `createdAt`, while the phone keys on
+ * `id` and carries `synced`. Mapping between them explicitly is what keeps a server
+ * field from silently becoming a local one it does not mean.
+ */
+interface ServerReading {
+  clientId: string;
+  routeId?: string;
+  collectorId?: string;
+  accountNumber: string;
+  previousReading: number;
+  currentReading: number;
+  consumption: number;
+  readingDate: string;
+  clientTimestamp?: number;
+  createdAt: string;
+}
+
+/**
  * Moves records off this phone and onto TWD's server.
  *
  * ⚠️ THIS USED TO SEND NOTHING. Every path was:
@@ -130,6 +151,74 @@ export class SyncService {
     }
   }
 
+  /**
+   * Pull this collector's own readings back down from TWD.
+   *
+   * THE ONE DIRECTION THIS CLASS NEVER TRAVELLED. Every history screen a collector
+   * has — Daily Summary, Reports, the billing periods behind them — reads
+   * `OfflineStorage` and nothing else, which is correct offline and quietly wrong
+   * after a reinstall: the records are safely on the server, the phone has none of
+   * them, and the collector is shown an empty working life. A factory reset, a
+   * replacement handset or a second phone all land in the same place.
+   *
+   * Three conditions, and each one is load-bearing:
+   *
+   *   1. **The outbox must be empty.** If anything is still waiting to upload, this
+   *      does nothing at all. A phone holding unsent work is the authority on that
+   *      work, and merging a server list into it while `syncAll` may be walking the
+   *      same store is how two writers end up interleaving on one AsyncStorage key.
+   *   2. **Only ids the phone has never seen** are added — enforced in
+   *      `mergeSyncedMeterReadings`, so nothing here can overwrite a local record.
+   *   3. **Everything it adds is already synced**, by definition: the server just
+   *      sent it. They are not queued for upload.
+   *
+   * `GET /readings` is scoped server-side to the calling collector (see
+   * app-backend/controllers/meterReadingController.js), so there is no collectorId
+   * to pass and no way to ask for somebody else's route.
+   *
+   * Returns the number of records recovered. Silent on failure: this runs on session
+   * start, a collector did not ask for it, and a phone that already has its history
+   * has nothing to report.
+   */
+  static async hydrateHistory(): Promise<number> {
+    try {
+      const pending = await OfflineStorage.getUnsyncedMeterReadings();
+      if (pending.length > 0) return 0;
+
+      const netInfo = await NetInfo.fetch();
+      if (!netInfo.isConnected || !netInfo.isInternetReachable) return 0;
+
+      const { readings } = await apiFetch<{ readings: ServerReading[] }>('/readings');
+
+      return await OfflineStorage.mergeSyncedMeterReadings(
+        readings
+          // A record with no clientId predates the offline app and has no id this
+          // phone can dedupe on — skipped rather than given a synthetic one, which
+          // would re-add it on every launch.
+          .filter((r) => Boolean(r.clientId))
+          .map((r) => ({
+            id: r.clientId,
+            routeId: r.routeId ?? '',
+            collectorId: r.collectorId ?? '',
+            accountNumber: r.accountNumber,
+            previousReading: r.previousReading,
+            currentReading: r.currentReading,
+            consumption: r.consumption,
+            readingDate: r.readingDate,
+            // The moment the reading was taken, not the moment it reached TWD.
+            // `createdAt` is the server's clock and would re-order a route by when
+            // signal came back rather than by when the collector walked it.
+            timestamp: r.clientTimestamp ?? (Date.parse(r.createdAt) || 0),
+            synced: true,
+          }))
+      );
+    } catch {
+      // Offline, unauthorised, or the endpoint is unreachable. The phone keeps
+      // whatever it already had, which is the state it was in a moment ago.
+      return 0;
+    }
+  }
+
   private static async syncMeterReadings(): Promise<SyncResult> {
     const unsynced = await OfflineStorage.getUnsyncedMeterReadings();
     let success = 0;
@@ -146,6 +235,19 @@ export class SyncService {
             previousReading: reading.previousReading,
             currentReading: reading.currentReading,
             readingDate: reading.readingDate,
+            /**
+             * When the collector took the reading, on their phone's clock.
+             *
+             * `MeterReading.clientTimestamp` has existed in the schema all along and
+             * nothing ever sent it, so every stored reading carries only the
+             * server's `createdAt` — the moment signal came back, which for a
+             * collector working a barangay offline can be hours later and in a
+             * different order than the route was walked. It did not matter while
+             * nothing read the records back; `hydrateHistory` below now does, and a
+             * recovered history sorted by when the phone found a signal is not the
+             * collector's day.
+             */
+            clientTimestamp: reading.timestamp,
           }),
         });
         // Only after the server acknowledged. If this line is ever moved above the

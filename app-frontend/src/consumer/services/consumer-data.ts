@@ -8,6 +8,7 @@ import type {
   Feedback,
   FeedbackType,
   Notice,
+  Notification,
 } from '@/consumer/types';
 
 /**
@@ -39,6 +40,41 @@ export async function listBills(): Promise<Bill[]> {
 export async function listNotices(): Promise<Notice[]> {
   const { announcements } = await apiFetch<{ announcements: Notice[] }>('/announcements');
   return announcements;
+}
+
+/**
+ * GET /notifications — messages addressed to this consumer, newest first.
+ *
+ * ⚠️ EXPECT `[]`. Nothing writes `consumernotifications` yet, so this endpoint is
+ * correct and empty at the same time. That is not a reason to point it somewhere
+ * fuller: it was previously reading the Admin Portal's staff feed — batch-billing
+ * logs addressed to `recipientRole: 'admin'` — and returned `[]` only because the
+ * `consumerId` filter happened to match none of them. See
+ * app-backend/models/Notification.js.
+ *
+ * The distinction from `listNotices()` is the audience and it is not cosmetic:
+ * notices are published to the district, these are addressed to one household and
+ * can carry an amount and a due date. They are rendered in one screen and must not
+ * be merged into one list.
+ */
+export async function listNotifications(): Promise<Notification[]> {
+  const { notifications } = await apiFetch<{ notifications: Notification[] }>('/notifications');
+  return notifications;
+}
+
+/**
+ * PATCH /notifications/:id/read — mark one as read.
+ *
+ * Returns the server's version of the row rather than assuming the request body
+ * became the truth, for the same reason `updateProfile` does: the screen should
+ * show what TWD stored, not what we asked it to store.
+ */
+export async function markNotificationRead(id: string): Promise<Notification> {
+  const { notification } = await apiFetch<{ notification: Notification }>(
+    `/notifications/${encodeURIComponent(id)}/read`,
+    { method: 'PATCH' }
+  );
+  return notification;
 }
 
 /**
@@ -165,4 +201,6 @@ export type {
   LinkRequestStatus,
   MailingAddress,
   Notice,
+  Notification,
+  NotificationKind,
 } from '@/consumer/types';
