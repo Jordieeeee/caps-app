@@ -11,6 +11,8 @@ import {
   type Notice,
 } from '@/consumer/services/consumer-data';
 import { dueLabel, summarise, type Urgency } from '@/consumer/lib/bill-summary';
+import { recentUsage } from '@/consumer/lib/usage-summary';
+import { WaterUsageSummary } from '@/consumer/components/water-usage';
 import { useSession } from '@/shared/auth/auth-context';
 import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
@@ -89,6 +91,13 @@ export default function ConsumerHome() {
           <ScreenSection>
             <BillSummaryCard bills={state.data.bills} />
           </ScreenSection>
+
+          {/* Second, never first. Home answers "what do I owe and when" before
+              anything else; usage is the follow-up question — and on a month with
+              a big bill, it is the one that explains the first answer. Rendered
+              only when a bill actually carries a reading, so it cannot become an
+              empty box promising data the district has not sent. */}
+          <UsageSummary bills={state.data.bills} />
 
           <ScreenSection gap={Spacing.two}>
             <TwdButton
@@ -199,6 +208,25 @@ function BillSummaryCard({ bills }: { bills: Bill[] }) {
         </View>
       )}
     </Pressable>
+  );
+}
+
+/**
+ * Water used, past 3 months — the same derivation Bills uses, at Home's density.
+ *
+ * Returns nothing rather than an empty-state card when no recent bill carries a
+ * reading. A section headed "Past 3 months used" over "no data yet" takes up the
+ * same room as the answer and gives the consumer a worse one; Bills is where the
+ * per-bill "Not recorded" belongs, next to the bill it is about.
+ */
+function UsageSummary({ bills }: { bills: Bill[] }) {
+  const usage = recentUsage(bills);
+  if (!usage) return null;
+
+  return (
+    <ScreenSection>
+      <WaterUsageSummary usage={usage} />
+    </ScreenSection>
   );
 }
 

@@ -68,10 +68,18 @@ export interface AccountLinkRequest {
   decidedAt: string | null;
 }
 
+/**
+ * One bill, as GET /billing presents it.
+ *
+ * `amount` is null when the portal's bill carries no total — the same rule
+ * `Account.outstanding` follows, and for the same reason: ₱0.00 is a claim that
+ * this bill is for nothing. Render null as "Amount unavailable", never as zero.
+ */
 export interface Bill {
   id: string;
+  /** `YYYY-MM` as the portal stores it. Run it through `formatBillingPeriod`. */
   billingPeriod: string;
-  amount: number;
+  amount: number | null;
   /** ISO 8601 from the server. */
   dueDate: string;
   status: 'paid' | 'pending' | 'overdue';
@@ -79,6 +87,22 @@ export interface Bill {
   daysOverdue: number;
   paymentDate?: string;
   paymentMethod?: string;
+
+  /**
+   * Water used in the billing period, in cubic metres, with the two meter readings
+   * it was computed from.
+   *
+   * These come off the bill, not from `meterreadings`: a collector's raw reading can
+   * be pending approval, rejected or re-read, and what a consumer is owed sight of
+   * is the figure their bill actually charged for.
+   *
+   * Null means the bill carries no reading (a legacy import, a minimum-charge bill).
+   * Show "Not recorded" — 0 m³ says the household used no water in a month it was
+   * billed for.
+   */
+  consumptionCuM: number | null;
+  previousReading: number | null;
+  currentReading: number | null;
 }
 
 export interface Notice {

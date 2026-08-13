@@ -8,10 +8,16 @@ const { normaliseMobile, INVALID_MOBILE_MESSAGE } = require('../utils/phone');
  * The consumer's own registry record — read here, editable only in part.
  *
  * The `consumers` collection is the Admin Portal's customer registry, not this
- * backend's table. Everything in it is shown to the person it describes, because
+ * backend's table. Everything in it is offered to the person it describes, because
  * a consumer being unable to see what the district holds about them is its own
  * problem — a wrong barangay on file is why a bill never arrives, and today the
  * only way to discover that is to be told at the counter.
+ *
+ * Offered, not necessarily rendered: the Account screen stopped displaying `validId`
+ * and `isSeniorCitizen` (see the note in app-frontend/src/app/consumer/account/
+ * index.tsx). They are still sent. Trimming the payload to match is a separate
+ * decision — one that would also stop the office from being able to point at a
+ * response when a consumer disputes what is on file.
  *
  * Editing is a much narrower hole, and it is narrow in two independent places:
  *

@@ -12,7 +12,17 @@ export type Urgency = 'overdue' | 'due-soon' | 'scheduled' | 'clear';
 export interface BillSummary {
   /** Every bill not yet paid, soonest due first. */
   outstanding: Bill[];
+  /**
+   * Sum of the outstanding bills that carry a total. A floor, not a promise:
+   * check `unknownAmounts` before presenting it as what the household owes.
+   */
   totalDue: number;
+  /**
+   * Outstanding bills whose amount the server sent as null. Non-zero means the
+   * figure above is missing at least one bill, which the screen must say — a total
+   * that quietly omits a bill sends someone to the counter with too little money.
+   */
+  unknownAmounts: number;
   /** The bill that needs attention first, or null when nothing is owed. */
   next: Bill | null;
   /** Negative when the due date has passed. */
@@ -58,7 +68,8 @@ export function summarise(bills: Bill[], now: Date = new Date()): BillSummary {
     .filter((b) => b.status !== 'paid')
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
-  const totalDue = outstanding.reduce((sum, b) => sum + b.amount, 0);
+  const totalDue = outstanding.reduce((sum, b) => sum + (b.amount ?? 0), 0);
+  const unknownAmounts = outstanding.filter((b) => b.amount === null).length;
   const next = outstanding[0] ?? null;
   const days = next ? daysUntil(next.dueDate, now) : null;
 
@@ -74,7 +85,7 @@ export function summarise(bills: Bill[], now: Date = new Date()): BillSummary {
         ? 'due-soon'
         : 'scheduled';
 
-  return { outstanding, totalDue, next, daysUntilDue: days, urgency };
+  return { outstanding, totalDue, unknownAmounts, next, daysUntilDue: days, urgency };
 }
 
 /** Plain-language due date. Never bare "in -3 days". */

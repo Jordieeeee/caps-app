@@ -397,18 +397,16 @@ function DetailsSection({
         {profile.consumerType !== 'business' && (
           <DetailRow label="Date of birth" value={formatDate(profile.birthDate ?? undefined)} />
         )}
-        <DetailRow
-          label="Valid ID"
-          value={
-            profile.validId?.idNumber
-              ? `${profile.validId.idType ?? 'ID'} · ${profile.validId.idNumber}`
-              : ''
-          }
-        />
-        {/* Shown because it changes what the consumer pays — a senior citizen is
-            entitled to a statutory discount, so someone who qualifies and is
-            recorded as "No" needs to see that and bring their ID to the office. */}
-        <DetailRow label="Senior citizen" value={profile.isSeniorCitizen ? 'Yes' : 'No'} />
+        {/* Deliberately absent: "Valid ID" and "Senior citizen".
+            Both are office-held facts the consumer cannot change from here — the
+            schema makes them unwritable (see app-backend/models/Consumer.js), so the
+            rows could only ever be read back. The ID row also put a government ID
+            number on a screen anyone glancing at the phone could read, to no end:
+            nobody needs their own ID number recited to them, and it is the one field
+            here worth shoulder-surfing.
+            `GET /profile` still returns both; they are simply not rendered. If the
+            senior-citizen entitlement needs to be visible again, it belongs next to
+            the discount it earns on a bill, not in a list of personal facts. */}
         <DetailRow
           label="Customer since"
           value={formatDate(profile.memberSince ?? undefined)}

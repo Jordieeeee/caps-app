@@ -50,7 +50,10 @@ export type IconName =
   | 'moon'
   | 'smartphone'
   | 'pencil'
-  | 'file-chart';
+  | 'file-chart'
+  | 'droplet'
+  | 'trending-up'
+  | 'trending-down';
 
 interface IconProps {
   name: IconName;
@@ -129,6 +132,30 @@ function glyph(name: IconName, c: Common) {
           <Path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" {...c} />
           <Path d="M12 12 16 8" {...c} />
           <Path d="M20.5 17a9 9 0 1 0-17 0" {...c} />
+        </>
+      );
+    // Water, as distinct from `gauge` (the meter that measures it). Usage figures
+    // carry this; readings and route stops keep the gauge.
+    case 'droplet':
+      return <Path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" {...c} />;
+    /**
+     * Direction of change, and only direction. Always drawn in the surrounding text
+     * colour at the two call sites in consumer/components/water-usage.tsx — up is
+     * not red and down is not green, because more water used is not a warning and
+     * less is not an achievement (a stuck meter reads as a frugal month).
+     */
+    case 'trending-up':
+      return (
+        <>
+          <Polyline points="22 7 13.5 15.5 8.5 10.5 2 17" {...c} />
+          <Polyline points="16 7 22 7 22 13" {...c} />
+        </>
+      );
+    case 'trending-down':
+      return (
+        <>
+          <Polyline points="22 17 13.5 8.5 8.5 13.5 2 7" {...c} />
+          <Polyline points="16 17 22 17 22 11" {...c} />
         </>
       );
     case 'wallet':

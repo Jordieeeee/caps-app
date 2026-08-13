@@ -1,4 +1,5 @@
 const Billing = require('../models/Billing');
+const { amountOf, isPaid, consumptionOf } = require('../models/Billing');
 const httpError = require('../utils/httpError');
 const ErrorCodes = require('../utils/errorCodes');
 
@@ -24,31 +25,44 @@ function daysOverdue(dueDate, now) {
 /**
  * Shape a portal bill for the mobile UI.
  *
- * `status` is recomputed rather than trusted: the portal marks a bill 'overdue'
+ * `status` is recomputed rather than trusted: the portal marks a bill OVERDUE
  * during its own billing run, so a bill that passed its due date since that run
- * still reads 'unpaid' in the document. The consumer would see "due" on something
+ * still reads UNPAID in the document. The consumer would see "due" on something
  * the office already considers late.
  *
  * `unpaid` maps to `pending` because that is the vocabulary the client types use.
  *
- * ⚠️ No `accountNumber`. Real bills carry no account reference — see
- * utils/accountPaymentSummary. Inventing one here is exactly the "fill the hole
- * with plausible data" failure; the client groups by consumer until the portal's
- * billing run puts a real account ref on the bill.
+ * The reading figures ride along on the bill itself — `consumptionCuM` is what the
+ * district charged for, not a number this backend derives from `meterreadings`.
+ * That distinction is the whole point: a collector's raw reading can be pending
+ * approval, rejected, or re-read, and the one a consumer is entitled to see on a
+ * bill is the one the bill was computed from. They arrive as explicit nulls when a
+ * bill carries no reading (a legacy import, a minimum-charge bill), so the client
+ * can say "not recorded" instead of rendering 0 m³ — which reads as "you used no
+ * water" on a bill that charged for some.
+ *
+ * ⚠️ Still no `accountNumber`. Newer bills do carry `connectionId`, but resolving
+ * it to an account number is a second query and a change to per-meter balance
+ * attribution — see the note in models/Billing.js. The client groups by consumer.
  */
 function present(bill, now) {
-  const overdueDays = bill.status === 'paid' ? 0 : daysOverdue(bill.dueDate, now);
-  const status = bill.status === 'paid' ? 'paid' : overdueDays > 0 ? 'overdue' : 'pending';
+  const paid = isPaid(bill);
+  const overdueDays = paid ? 0 : daysOverdue(bill.dueDate, now);
+  const status = paid ? 'paid' : overdueDays > 0 ? 'overdue' : 'pending';
+  const { consumptionCuM, previousReading, currentReading } = consumptionOf(bill);
 
   return {
     id: String(bill._id),
-    billingPeriod: bill.billingPeriod,
-    amount: bill.amount,
+    billingPeriod: bill.period,
+    amount: amountOf(bill),
     dueDate: bill.dueDate.toISOString(),
     status,
     daysOverdue: overdueDays,
     paymentDate: bill.paymentDate ? bill.paymentDate.toISOString() : undefined,
     paymentMethod: bill.paymentMethod,
+    consumptionCuM,
+    previousReading,
+    currentReading,
   };
 }
 

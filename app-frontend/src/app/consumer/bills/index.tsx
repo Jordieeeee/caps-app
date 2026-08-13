@@ -6,6 +6,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { listBills, type Bill } from '@/consumer/services/consumer-data';
 import { dueLabel, daysUntil, summarise } from '@/consumer/lib/bill-summary';
+import { formatCuM, recentUsage } from '@/consumer/lib/usage-summary';
+import { WaterUsageCard } from '@/consumer/components/water-usage';
 import { FilterChips } from '@/shared/components/filter-chips';
 import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
@@ -92,10 +94,13 @@ interface BillsBodyProps {
 
 function BillsBody({ bills, filter, onFilter, onHowToPay }: BillsBodyProps) {
   const theme = useTwdTheme();
-  const { totalDue, outstanding } = summarise(bills);
+  const { totalDue, unknownAmounts, outstanding } = summarise(bills);
+  const usage = recentUsage(bills);
 
   const paidCount = bills.filter((b) => b.status === 'paid').length;
-  const totalPaid = bills.filter((b) => b.status === 'paid').reduce((sum, b) => sum + b.amount, 0);
+  const totalPaid = bills
+    .filter((b) => b.status === 'paid')
+    .reduce((sum, b) => sum + (b.amount ?? 0), 0);
 
   const visible = filter ? bills.filter((b) => b.status === filter) : bills;
 
@@ -144,6 +149,16 @@ function BillsBody({ bills, filter, onFilter, onHowToPay }: BillsBodyProps) {
           </ThemedView>
         </View>
 
+        {/* Said out loud, because a total that silently drops a bill is how someone
+            arrives at the counter with too little money. */}
+        {unknownAmounts > 0 && (
+          <ThemedText type="small" themeColor="textSecondary">
+            {unknownAmounts === 1
+              ? 'One unpaid bill has no amount on file, so the outstanding total is at least this much. Ask at the TWD office for the full figure.'
+              : `${unknownAmounts} unpaid bills have no amount on file, so the outstanding total is at least this much. Ask at the TWD office for the full figure.`}
+          </ThemedText>
+        )}
+
         {outstanding.length > 0 && (
           <TwdButton
             label="How to pay"
@@ -153,6 +168,16 @@ function BillsBody({ bills, filter, onFilter, onHowToPay }: BillsBodyProps) {
           />
         )}
       </ScreenSection>
+
+      {/* Above the bill list, below the money: it explains the amounts underneath
+          it, so it has to be read before them. Home shows the same figures in
+          `WaterUsageSummary`, from this same derivation — see
+          consumer/components/water-usage.tsx. */}
+      {usage && (
+        <ScreenSection>
+          <WaterUsageCard usage={usage} />
+        </ScreenSection>
+      )}
 
       <ScreenSection gap={Spacing.three}>
         <ThemedText type="defaultBold">Your bills</ThemedText>
@@ -227,7 +252,8 @@ function BillCard({ bill }: { bill: Bill }) {
           numberOfLines={1}
           adjustsFontSizeToFit
           minimumFontScale={0.7}>
-          {formatPeso(bill.amount)}
+          {/* Not ₱0.00 when the bill carries no total — see Bill.amount. */}
+          {bill.amount === null ? 'Amount unavailable' : formatPeso(bill.amount)}
         </ThemedText>
         {unpaid && (
           <View style={styles.dueRow}>
@@ -244,23 +270,50 @@ function BillCard({ bill }: { bill: Bill }) {
           <ThemedText type="small" themeColor="textSecondary">
             Due date
           </ThemedText>
-          <ThemedText type="small">{bill.dueDate}</ThemedText>
+          {/* Formatted, not the raw ISO timestamp this row used to print. */}
+          <ThemedText type="small">{formatDate(bill.dueDate)}</ThemedText>
         </View>
-        {bill.status === 'paid' && (
-          <>
-            <View style={styles.detailRow}>
-              <ThemedText type="small" themeColor="textSecondary">
-                Paid on
-              </ThemedText>
-              <ThemedText type="small">{bill.paymentDate}</ThemedText>
-            </View>
-            <View style={styles.detailRow}>
-              <ThemedText type="small" themeColor="textSecondary">
-                Paid via
-              </ThemedText>
-              <ThemedText type="small">{bill.paymentMethod}</ThemedText>
-            </View>
-          </>
+
+        {/* What the money was for. A peso figure with no volume beside it is not
+            something a household can sanity-check against their own use. */}
+        <View style={styles.detailRow}>
+          <ThemedText type="small" themeColor="textSecondary">
+            Water used
+          </ThemedText>
+          <ThemedText type="small">
+            {bill.consumptionCuM === null ? 'Not recorded' : formatCuM(bill.consumptionCuM)}
+          </ThemedText>
+        </View>
+
+        {bill.previousReading !== null && bill.currentReading !== null && (
+          <View style={styles.detailRow}>
+            <ThemedText type="small" themeColor="textSecondary">
+              Meter reading
+            </ThemedText>
+            <ThemedText type="small">
+              {bill.previousReading} → {bill.currentReading}
+            </ThemedText>
+          </View>
+        )}
+
+        {/* Only when the portal actually stamped them. Its billing run marks a bill
+            PAID without recording when or how, and blank rows labelled "Paid on"
+            read as missing data about a payment rather than about our schema. */}
+        {bill.status === 'paid' && bill.paymentDate && (
+          <View style={styles.detailRow}>
+            <ThemedText type="small" themeColor="textSecondary">
+              Paid on
+            </ThemedText>
+            <ThemedText type="small">{formatDate(bill.paymentDate)}</ThemedText>
+          </View>
+        )}
+        {bill.status === 'paid' && bill.paymentMethod && (
+          <View style={styles.detailRow}>
+            <ThemedText type="small" themeColor="textSecondary">
+              Paid via
+            </ThemedText>
+            <ThemedText type="small">{bill.paymentMethod}</ThemedText>
+          </View>
         )}
       </View>
     </ThemedView>
