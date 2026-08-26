@@ -37,7 +37,14 @@ const { formatAddress } = require('../utils/address');
  * no account document is still the consumer's meter and is still returned.
  */
 exports.listMine = async (req, res) => {
-  const connections = await ServiceConnection.find({ consumerId: req.user.sub }).lean();
+  // Connections come from the resolved scope, not from req.user.sub. For a
+  // password consumer that is exactly their own id and this behaves as it
+  // always did; for a Google consumer it is the set of registry consumers
+  // their ACTIVE ConsumerLinks resolve to.
+  const { consumerIds } = req.consumerScope;
+  const connections = consumerIds.length
+    ? await ServiceConnection.find({ consumerId: { $in: consumerIds } }).lean()
+    : [];
   const accountNumbers = connections.map((c) => c.accountNo).filter(Boolean);
 
   const accounts = await Account.find({ accountNumber: { $in: accountNumbers } }).lean();
@@ -51,7 +58,10 @@ exports.listMine = async (req, res) => {
    * utils/accountPaymentSummary.js for why holding several accounts makes it
    * unattributable rather than divisible.
    */
-  const balance = await attributableBalance(req.user.sub, connections.length);
+  // Still deliberately unattributable across several meters — see
+  // utils/accountPaymentSummary.js. Only a single-connection caller gets a
+  // number, and the id it is computed from is the one that owns the bills.
+  const balance = await attributableBalance(consumerIds[0], connections.length);
 
   const rows = connections.map((connection) => {
     const account = accountByNumber.get(connection.accountNo) || null;
@@ -436,7 +446,12 @@ async function notifyOffice(consumerId, accountNumber, note) {
 
 /** GET /accounts/link-requests — the caller's own, newest first. */
 exports.listLinkRequests = async (req, res) => {
-  const requests = await AccountLinkRequest.listByConsumer(req.user.sub);
+  // Google consumers never create these — they link by claiming with an OTP —
+  // so this is legitimately empty for them. Returning [] rather than 403 keeps
+  // the Account screen from rendering an error for a section that simply does
+  // not apply to that identity.
+  const id = req.consumerScope?.consumerIds?.[0] ?? req.user.sub;
+  const requests = id ? await AccountLinkRequest.listByConsumer(id) : [];
   res.json({ requests: requests.map(presentRequest) });
 };
 

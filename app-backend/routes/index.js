@@ -23,5 +23,9 @@ router.use('/announcements', require('./announcementRoutes'));
 router.use('/feedback', require('./feedbackRoutes'));
 router.use('/profile', require('./profileRoutes'));
 router.use('/notifications', require('./notificationRoutes'));
+// Google-flow consumer claim/verify (OTP against registry mobile number).
+router.use('/consumer', require('./consumerRoutes'));
+// Portal-admin routes: collector allowlist + consumer-link unlink/dispute.
+router.use('/admin', require('./adminRoutes'));
 
 module.exports = router;

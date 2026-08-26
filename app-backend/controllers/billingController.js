@@ -77,7 +77,11 @@ function present(bill, now) {
  */
 exports.listMine = async (req, res) => {
   const now = new Date();
-  const bills = await Billing.listForConsumer(req.user.sub);
+  // Scope comes from requireConsumerScope, never from req.user.sub directly:
+  // that id is a consumers._id for a password session and a google_users._id
+  // for a Google one, and only the middleware knows how to turn either into
+  // the set of registry consumers this caller may read.
+  const bills = await Billing.listForConsumers(req.consumerScope.consumerIds);
   res.json({ bills: bills.map((b) => present(b, now)) });
 };
 

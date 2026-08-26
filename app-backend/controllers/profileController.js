@@ -74,8 +74,23 @@ function present(raw, email) {
   };
 }
 
+/**
+ * The registry consumer this request is about.
+ *
+ * `req.user.sub` is only a consumers._id for a PASSWORD session. A Google-flow
+ * consumer's sub points at google_users, so the old findById(sub) returned
+ * null and the account screen showed "could not load". When the scope
+ * middleware has resolved the caller (see middleware/consumer-scope.js), use
+ * the registry id it derived from their active ConsumerLink instead.
+ *
+ * A Google consumer with no live link has no profile to show — 404, not 403:
+ * they are properly signed in, there is simply no registry record attached to
+ * them yet.
+ */
 async function loadSelf(req) {
-  const consumer = await Consumer.findById(req.user.sub);
+  const scoped = req.consumerScope?.consumerIds ?? [];
+  const id = req.consumerScope ? scoped[0] : req.user.sub;
+  const consumer = id ? await Consumer.findById(id) : null;
   if (!consumer) throw httpError(404, 'Your profile could not be found.');
   return consumer;
 }

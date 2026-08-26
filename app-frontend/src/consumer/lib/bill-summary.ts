@@ -53,15 +53,21 @@ export function daysUntil(date: string, now: Date = new Date()): number {
 }
 
 /**
- * "Due soon" is seven days.
+ * "Due soon" is five days.
  *
- * Not an arbitrary round number: TWD bills monthly and a consumer who checks the
- * app roughly weekly must never first learn about a bill after it is late. Seven
- * days guarantees at least one look at it while it is still payable on time, and
- * paying means a trip to the office or waiting for a collector — this is not a
- * one-tap action that can be left to the last evening.
+ * ⚠️ This was seven, for a documented reason worth knowing before changing it
+ * back or further: TWD bills monthly, paying means a trip to the office or
+ * waiting for a collector, and seven days guaranteed that a consumer who opens
+ * the app roughly weekly saw the bill at least once while it was still payable
+ * on time. Five days narrows that guarantee — someone who checks on a Sunday
+ * can now first meet a bill with four days left.
+ *
+ * It was lowered deliberately (requested 2026-08-26) so the alarming treatment
+ * fires closer to the deadline and the card reads calm the rest of the month.
+ * If consumers start reporting they "never saw it coming", this number is the
+ * first thing to put back.
  */
-const DUE_SOON_DAYS = 7;
+const DUE_SOON_DAYS = 5;
 
 export function summarise(bills: Bill[], now: Date = new Date()): BillSummary {
   const outstanding = bills

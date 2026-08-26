@@ -1,5 +1,6 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import * as WebBrowser from 'expo-web-browser';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider, useAuth } from '@/shared/auth/auth-context';
@@ -8,6 +9,13 @@ import {
   ThemePreferenceProvider,
   useResolvedScheme,
 } from '@/shared/theme/theme-preference';
+
+// Must run exactly once at module scope, before ANY auth screen can mount: on
+// web it is the piece that closes the auth popup when Google redirects back to
+// this page, so a login screen mounting first would hang the redirect forever.
+// On native it is a documented no-op, which is why it lives here
+// unconditionally rather than behind a platform check that could drift.
+WebBrowser.maybeCompleteAuthSession();
 
 SplashScreen.preventAutoHideAsync();
 
@@ -33,6 +41,13 @@ function RootNavigator() {
   const signedIn = state.status === 'signedIn';
   const role = signedIn ? state.role : null;
 
+  // Google-flow sessions drive the same guard mechanism with their own
+  // lowercase roles. 'unclaimed' admits ONLY the claim flow; 'consumer' and
+  // 'collector' map straight onto their areas. Route names match these
+  // strings exactly, which keeps this table honest at a glance.
+  const googleActive = state.status === 'googleSignedIn';
+  const googleRole = googleActive ? state.role : null;
+
   // Reading the keychain is fast but not instant. Showing the loading state
   // rather than the login form matters: a collector who is already signed in must
   // never see a sign-in form flash past on a cold start and think they've been
@@ -43,17 +58,30 @@ function RootNavigator() {
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Protected guard={!signedIn}>
+      {/* Visible only with no session of either kind. */}
+      <Stack.Protected guard={!signedIn && !googleActive}>
         <Stack.Screen name="(auth)" />
       </Stack.Protected>
 
-      <Stack.Protected guard={role === 'Collector'}>
+      {/* The claim flow exists solely for unclaimed Google identities; verify
+          success flips the role and Expo Router drops this subtree from the
+          back stack automatically. */}
+      <Stack.Protected guard={googleActive && googleRole === 'unclaimed'}>
+        <Stack.Screen name="claim" />
+      </Stack.Protected>
+
+      <Stack.Protected guard={role === 'Collector' || googleRole === 'collector'}>
         <Stack.Screen name="collector" />
       </Stack.Protected>
 
-      <Stack.Protected guard={role === 'Consumer'}>
+      <Stack.Protected guard={role === 'Consumer' || googleRole === 'consumer'}>
         <Stack.Screen name="consumer" />
       </Stack.Protected>
+
+      {/* Internal allowlist tool — self-authenticating (inline portal login,
+          memory-only token), so it stays reachable regardless of app session.
+          Not linked from any screen by design; reached by route directly. */}
+      <Stack.Screen name="admin-allowlist" />
 
       <Stack.Screen name="index" />
     </Stack>

@@ -4,16 +4,18 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import {
+  getProfile,
   listAccounts,
   listBills,
   listNotices,
   type Bill,
+  type ConsumerProfile,
   type Notice,
 } from '@/consumer/services/consumer-data';
 import { dueLabel, summarise, type Urgency } from '@/consumer/lib/bill-summary';
 import { recentUsage } from '@/consumer/lib/usage-summary';
 import { WaterUsageSummary } from '@/consumer/components/water-usage';
-import { useSession } from '@/shared/auth/auth-context';
+import { useIdentity } from '@/shared/auth/auth-context';
 import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
@@ -40,21 +42,55 @@ import { Radius, Spacing } from '@/shared/theme/twd';
  * it now asks first.
  */
 export default function ConsumerHome() {
-  const { session } = useSession();
+  // useIdentity, not useSession: this screen is reachable by BOTH a password
+  // consumer and a Google-claimed one, and useSession throws for the latter —
+  // which crashed the whole navigator in a render loop. It supplies the
+  // fallback only; the greeting proper comes from the registry profile below.
+  const { name, email } = useIdentity();
   const router = useRouter();
 
   const load = useCallback(
     async () =>
-      Promise.all([listBills(), listAccounts(), listNotices()]).then(
-        ([bills, accounts, notices]) => ({ bills, accounts, notices })
-      ),
+      // getProfile is allSettled-style on purpose: it carries the greeting, not
+      // the answer this screen exists to give. A consumer whose profile call
+      // fails should still see what they owe, greeted a little less warmly —
+      // failing the whole load over a display name would be the wrong trade.
+      Promise.all([
+        listBills(),
+        listAccounts(),
+        listNotices(),
+        getProfile().catch(() => null),
+      ]).then(([bills, accounts, notices, profile]) => ({
+        bills,
+        accounts,
+        notices,
+        profile,
+      })),
     []
   );
   const { state, reload } = useAsync(load);
 
   return (
     <ScreenContainer onRefresh={reload} refreshing={false}>
-      <ScreenHeader title={firstName(session.user.name)} subtitle={greeting()} />
+      {/* The REGISTRY given name, taken from the portal's own `firstName`
+          field rather than sliced out of the full name. Filipino given names
+          are frequently compound — this household's is literally "Mark
+          Jordan" — so splitting "Mark Jordan Berber Javier" on whitespace
+          greets them as "Mark", which is a different person's name. The portal
+          already stores the parts separately; there is nothing to infer.
+
+          The Google session carries no display name at all (the callback
+          returns only { sessionToken, role, email }), hence the fallback chain
+          down to the email, so the header is never blank while the profile is
+          still in flight. */}
+      <ScreenHeader
+        title={greetingName(
+          state.status === 'ready' ? state.data.profile : null,
+          name,
+          email
+        )}
+        subtitle={greeting()}
+      />
 
       {state.status === 'loading' && (
         <ScreenSection>
@@ -271,14 +307,27 @@ function NoticeRow({ notice, onPress }: { notice: Notice; onPress: () => void })
   );
 }
 
+/**
+ * Border colour for the balance card.
+ *
+ * Only two states are allowed to alarm: a bill that is late, and one due
+ * within DUE_SOON_DAYS (5). Everything else rests on the ordinary element
+ * border, so a consumer with three weeks to pay does not open the app to a
+ * coloured warning about a bill that is simply... a bill.
+ *
+ * 'due-soon' was amber and is now danger, at the same time the window narrowed
+ * to five days. Amber across a seven-day window meant the card spent about a
+ * quarter of every billing cycle looking mildly urgent, which is how a colour
+ * stops meaning anything. Now it stays quiet, then it means "pay this".
+ */
 function urgencyColor(urgency: Urgency, theme: ReturnType<typeof useTwdTheme>): string {
   switch (urgency) {
     case 'overdue':
-      return theme.danger;
     case 'due-soon':
-      return theme.warning;
+      return theme.danger;
     case 'scheduled':
-      return theme.primary;
+      // Neutral at rest — the card still reads as a card, not as a warning.
+      return theme.border;
     case 'clear':
       return theme.success;
   }
@@ -291,8 +340,34 @@ function greeting(): string {
   return 'Good evening';
 }
 
-function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] || name;
+/**
+ * What to call the person, in order of how well we actually know it.
+ *
+ *   1. The registry's own `firstName` — authoritative, and already separated
+ *      from middle and last name by the portal. Compound given names ("Mark
+ *      Jordan", "Ma. Cristina") survive because nothing is being parsed.
+ *   2. `businessName` / `contactPersonName` for a commercial account, which
+ *      has no firstName at all.
+ *   3. The session's display name, for a password consumer whose profile call
+ *      has not landed yet.
+ *   4. The email's local part — the last resort for a Google session, which
+ *      carries nothing else.
+ *
+ * Never derives a given name by splitting a full name: that guesses at where a
+ * first name ends, and it guesses wrong on exactly the names most common here.
+ */
+function greetingName(
+  profile: ConsumerProfile | null,
+  sessionName: string | null,
+  email: string | null
+): string {
+  const fromRegistry =
+    profile?.firstName || profile?.businessName || profile?.contactPersonName;
+  if (fromRegistry) return fromRegistry;
+
+  if (sessionName) return sessionName;
+  if (email) return email.includes('@') ? email.split('@')[0] : email;
+  return 'there';
 }
 
 const styles = StyleSheet.create({

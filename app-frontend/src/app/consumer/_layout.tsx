@@ -17,7 +17,27 @@ import { useAuth } from '@/shared/auth/auth-context';
 export default function ConsumerLayout() {
   const { state } = useAuth();
 
-  if (state.status !== 'signedIn' || state.role !== 'Consumer') {
+  /**
+   * BOTH consumer identities, deliberately.
+   *
+   * This guard used to admit only the password session (status 'signedIn',
+   * role 'Consumer'). The root layout's guard had already been widened to
+   * `role === 'Consumer' || googleRole === 'consumer'`, so after a successful
+   * claim the two disagreed: the root mounted this route, this layout bounced
+   * to '/', index.tsx sent it straight back to '/consumer', and the two
+   * redirects ping-ponged until React gave up with "Maximum update depth
+   * exceeded". Any guard on this route must accept exactly what the root
+   * guard accepts or the same loop returns.
+   *
+   * Note the casing is not a typo: the password system's roles are
+   * capitalised ('Consumer') and the Google flow's are lowercase
+   * ('consumer') — see types/auth.ts and types/google-auth.ts.
+   */
+  const isConsumer =
+    (state.status === 'signedIn' && state.role === 'Consumer') ||
+    (state.status === 'googleSignedIn' && state.role === 'consumer');
+
+  if (!isConsumer) {
     return <Redirect href="/" />;
   }
 

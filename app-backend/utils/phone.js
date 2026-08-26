@@ -28,4 +28,18 @@ function normaliseMobile(raw) {
 const INVALID_MOBILE_MESSAGE =
   'Enter a valid Philippine mobile number, for example 09171234567.';
 
-module.exports = { normaliseMobile, INVALID_MOBILE_MESSAGE };
+/**
+ * What the claim/verify flow shows the user instead of the number the OTP was
+ * sent to — enough to recognise the SIM ("…ends 1234"), not enough to confirm
+ * a stranger's guess about whose number is on file. Runs normaliseMobile
+ * internally so both stored (+63…) and typed (09…) forms mask identically.
+ *
+ * @returns {string|null} e.g. "09XX-XXX-1234", or null if not a mobile.
+ */
+function maskMobile(raw) {
+  const digits = normaliseMobile(raw);
+  if (!digits) return null;
+  return `${digits.slice(0, 2)}XX-XXX-${digits.slice(-4)}`;
+}
+
+module.exports = { normaliseMobile, INVALID_MOBILE_MESSAGE, maskMobile };

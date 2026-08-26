@@ -13,6 +13,10 @@ import { restoreSession } from '@/shared/auth/session-restore';
 import * as api from '@/shared/services/api-client';
 import { decodeAccessToken, isAccessTokenExpired } from '@/shared/services/jwt';
 import { secureTokenStore } from '@/shared/services/secure-token-store';
+import {
+  googleSessionStore,
+  onGoogleSessionChange,
+} from '@/shared/services/google-session-store';
 import { useConnectivity } from '@/shared/hooks/use-connectivity';
 import {
   AuthError,
@@ -25,6 +29,11 @@ import {
   type StoredSession,
   type SupportedRole,
 } from '@/shared/types/auth';
+import {
+  isGoogleAppRole,
+  type GoogleAppRole,
+  type GoogleSession,
+} from '@/shared/types/google-auth';
 
 /**
  * Auth state lives in Context + useReducer rather than Redux Toolkit or Zustand.
@@ -41,6 +50,7 @@ type Action =
   | { type: 'restored'; state: AuthState }
   | { type: 'authenticating' }
   | { type: 'signedIn'; session: StoredSession; role: SupportedRole; sync: SessionSync }
+  | { type: 'googleAdopted'; session: GoogleSession; role: GoogleAppRole }
   | { type: 'signedOut'; reason: SignedOutReason }
   | { type: 'syncChanged'; sync: SessionSync }
   | { type: 'sessionRotated'; session: StoredSession };
@@ -58,6 +68,8 @@ function reducer(state: AuthState, action: Action): AuthState {
         role: action.role,
         sync: action.sync,
       };
+    case 'googleAdopted':
+      return { status: 'googleSignedIn', session: action.session, role: action.role };
     case 'signedOut':
       return { status: 'signedOut', reason: action.reason };
     case 'syncChanged':
@@ -80,6 +92,10 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<void>;
   /** Consumer self-enrolment. The account created is always a Consumer. */
   enroll: (name: string, email: string, password: string) => Promise<void>;
+  /** Google-flow sign-in: validate + persist the exchanged session. */
+  signInWithGoogle: (session: GoogleSession) => Promise<void>;
+  /** Swap in the post-verify session (role 'unclaimed' → 'consumer'). */
+  updateGoogleRole: (session: GoogleSession) => Promise<void>;
   signOut: () => Promise<void>;
   /** Re-run restore — used by the "Try again" affordance on the no-connection state. */
   retryRestore: () => Promise<void>;
@@ -101,22 +117,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isOnlineRef.current = isOnline;
   }, [isOnline]);
 
+  /**
+   * Load + validate the stored google session WITHOUT trusting the persisted
+   * role blob: the JWT's signed claim decides, same rule as password adopt().
+   * Expired or malformed credentials are cleared rather than returned.
+   */
+  const loadValidGoogleSession = useCallback(async (): Promise<
+    { session: GoogleSession; role: GoogleAppRole } | null
+  > => {
+    const stored = await googleSessionStore.load();
+    if (!stored) return null;
+    const claims = decodeAccessToken(stored.sessionToken);
+    const role = claims?.role;
+    if (!role || !isGoogleAppRole(role) || isAccessTokenExpired(stored.sessionToken)) {
+      await googleSessionStore.clear();
+      return null;
+    }
+    return { session: stored, role };
+  }, []);
+
   const runRestore = useCallback(async (online: boolean) => {
     const outcome = await restoreSession(online);
-    dispatch(
-      outcome.kind === 'enter'
-        ? {
-            type: 'restored',
-            state: {
-              status: 'signedIn',
-              session: outcome.session,
-              role: outcome.role,
-              sync: outcome.sync,
-            },
-          }
-        : { type: 'restored', state: { status: 'signedOut', reason: outcome.reason } }
-    );
-  }, []);
+
+    if (outcome.kind === 'enter') {
+      // Password session wins if both systems have credentials stored. The
+      // shadowed google blob is dropped here rather than left lurking: it
+      // would otherwise resurrect that identity on the NEXT sign-out,
+      // which is a surprise no signed-out user deserves. clear() notifies
+      // listeners, but the guard in the subscription below ignores drops
+      // while a password session is active.
+      dispatch({
+        type: 'restored',
+        state: {
+          status: 'signedIn',
+          session: outcome.session,
+          role: outcome.role,
+          sync: outcome.sync,
+        },
+      });
+      const shadowed = await loadValidGoogleSession();
+      if (shadowed) await googleSessionStore.clear();
+      return;
+    }
+
+    // No password session. A locally-valid google session can still enter:
+    // its validity is judged from the keychain + token expiry alone, no
+    // network call, so this works offline too. That is deliberate — entry
+    // decides what to draw; liveness is enforced per-request (google bearer
+    // calls fail closed and force sign-out on 401), and consumer screens
+    // already own their own connectivity reporting.
+    const google = await loadValidGoogleSession();
+    if (google) {
+      dispatch({ type: 'restored', state: { status: 'googleSignedIn', ...google } });
+      return;
+    }
+
+    dispatch({ type: 'restored', state: { status: 'signedOut', reason: outcome.reason } });
+  }, [loadValidGoogleSession]);
 
   // Restore once connectivity is known. Waiting for the first NetInfo answer
   // matters: restoring with a guessed "offline" would send a consumer to the
@@ -135,6 +192,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       api.onSessionChange((session) => {
         if (session) dispatch({ type: 'sessionRotated', session });
         else dispatch({ type: 'signedOut', reason: { kind: 'session-expired' } });
+      }),
+    []
+  );
+
+  // Same for the google flow: a 401 anywhere in the bearer path clears the
+  // store, and that drop must end the React session too. statusRef guards
+  // against the shadowed-blob clear during password restore/sign-out
+  // clobbering an active PASSWORD session — only a drop while actually
+  // google-signed-in means anything. Saves are ignored here: role swaps go
+  // through updateGoogleRole explicitly, so a notify-loop is structurally
+  // impossible.
+  const statusRef = useRef<AuthState['status']>('restoring');
+  useEffect(() => {
+    statusRef.current = state.status;
+  }, [state.status]);
+
+  useEffect(
+    () =>
+      onGoogleSessionChange((session) => {
+        if (session) return;
+        if (statusRef.current === 'googleSignedIn') {
+          dispatch({ type: 'signedOut', reason: { kind: 'session-expired' } });
+        }
       }),
     []
   );
@@ -208,6 +288,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'signedIn', session, role, sync: 'online' });
   }, []);
 
+  /**
+   * Shared google adoption: validate against the signed claim, persist, enter
+   * the state machine. Used by both first sign-in (google-login screen) and
+   * the verify-claim role swap — one code path, so a future rotation scheme
+   * slots into exactly one place.
+   */
+  const adoptGoogleSession = useCallback(async (session: GoogleSession) => {
+    const claims = decodeAccessToken(session.sessionToken);
+    const role = claims?.role;
+    if (!role || !isGoogleAppRole(role)) {
+      await googleSessionStore.clear();
+      throw new AuthError(
+        ClientErrorCode.ROLE_UNSUPPORTED,
+        'This account could not be verified. Please sign in again.'
+      );
+    }
+    // save() notifies listeners, but the subscription ignores non-null events;
+    // entering the state machine happens here and nowhere else.
+    await googleSessionStore.save(session);
+    dispatch({ type: 'googleAdopted', session, role });
+  }, []);
+
+  const signInWithGoogle = useCallback(
+    async (session: GoogleSession) => {
+      await adoptGoogleSession(session);
+    },
+    [adoptGoogleSession]
+  );
+
+  /**
+   * Swap in the session returned by POST /consumer/verify-claim. The new
+   * token's role drives the guards, which drop the claim flow from history
+   * and admit the consumer area — declaratively, with no navigation call.
+   */
+  const updateGoogleRole = useCallback(
+    async (session: GoogleSession) => {
+      await adoptGoogleSession(session);
+    },
+    [adoptGoogleSession]
+  );
+
   const signIn = useCallback(
     async (email: string, password: string) => {
       dispatch({ type: 'authenticating' });
@@ -239,9 +360,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const signOut = useCallback(async () => {
+    if (state.status === 'googleSignedIn') {
+      // clear() emits; the subscription also dispatches session-expired, so
+      // the explicit dispatch AFTER it is what decides the reason — a user
+      // who chose to sign out must see "signed out", not "expired".
+      await googleSessionStore.clear();
+      dispatch({ type: 'signedOut', reason: { kind: 'signed-out' } });
+      return;
+    }
+
     const session = state.status === 'signedIn' ? state.session : await secureTokenStore.load();
     if (session) await api.logout(session.refreshToken);
     await secureTokenStore.clear();
+    // Defensive: drop any shadowed google credential too, so signing out of
+    // one system can never resurrect the other on next launch. The listener
+    // ignores this while statusRef says we're not google-signed-in.
+    await googleSessionStore.clear();
     dispatch({ type: 'signedOut', reason: { kind: 'signed-out' } });
   }, [state]);
 
@@ -251,8 +385,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [runRestore]);
 
   const value = useMemo(
-    () => ({ state, signIn, enroll, signOut, retryRestore }),
-    [state, signIn, enroll, signOut, retryRestore]
+    () => ({
+      state,
+      signIn,
+      enroll,
+      signInWithGoogle,
+      updateGoogleRole,
+      signOut,
+      retryRestore,
+    }),
+    [state, signIn, enroll, signInWithGoogle, updateGoogleRole, signOut, retryRestore]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -271,6 +413,35 @@ export function useSession() {
     throw new Error('useSession called outside a signed-in route.');
   }
   return state;
+}
+
+/**
+ * The caller's display name and email, for EITHER identity system.
+ *
+ * useSession() above deliberately throws outside a password session — it hands
+ * back `session.user` (routeIds, sync, the whole password shape) and there is
+ * no honest way to synthesise that from a Google session. But a screen that
+ * only wants "who is this, so I can greet them" should not have to care which
+ * system authenticated the user, and shouldn't crash when the answer is the
+ * other one. That crash is exactly what put a Google consumer into a render
+ * loop on the home screen.
+ *
+ * Returns nulls rather than throwing when signed out: consumers of this are
+ * presentational, and a missing name is a formatting problem, not a control-flow one.
+ */
+export function useIdentity(): { name: string | null; email: string | null } {
+  const { state } = useAuth();
+
+  if (state.status === 'signedIn') {
+    return { name: state.session.user?.name ?? null, email: state.session.user?.email ?? null };
+  }
+  if (state.status === 'googleSignedIn') {
+    // The Google session carries no display name — the backend returns only
+    // { sessionToken, role, email }. The email's local part is the best
+    // available greeting, and better than a blank header.
+    return { name: null, email: state.session.email ?? null };
+  }
+  return { name: null, email: null };
 }
 
 export { AuthError, AuthErrorCode };

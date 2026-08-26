@@ -6,6 +6,17 @@
  * the two ends of one wire.
  */
 
+/**
+ * The Google-flow session types, folded into the same union the guards read.
+ *
+ * One-way import (auth.ts → google-auth.ts) keeps the two wire contracts
+ * separate while letting ONE state machine drive ALL routing guards — the
+ * alternative was parallel providers and a guard layer forced to consult both.
+ * A google session never becomes a StoredSession: different shape, no refresh
+ * token, lowercase roles — api-client carries it as a bearer token only.
+ */
+import type { GoogleAppRole, GoogleSession } from '@/shared/types/google-auth';
+
 /** Roles the backend can put in a JWT. `Admin` exists server-side but has no mobile UI. */
 export type Role = 'Collector' | 'Consumer' | 'Admin';
 
@@ -117,4 +128,10 @@ export type AuthState =
   | { status: 'restoring' }
   | { status: 'signedOut'; reason: SignedOutReason }
   | { status: 'authenticating' }
-  | { status: 'signedIn'; session: StoredSession; role: SupportedRole; sync: SessionSync };
+  | { status: 'signedIn'; session: StoredSession; role: SupportedRole; sync: SessionSync }
+  | {
+      status: 'googleSignedIn';
+      session: GoogleSession;
+      /** DB-derived role: 'unclaimed' routes to the claim flow, others to their areas. */
+      role: GoogleAppRole;
+    };

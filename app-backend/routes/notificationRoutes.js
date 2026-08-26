@@ -1,9 +1,10 @@
 const router = require('express').Router();
 const { listMine, markRead } = require('../controllers/notificationController');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth } = require('../middleware/auth');
+const { requireConsumerScope } = require('../middleware/consumer-scope');
 const asyncHandler = require('../middleware/asyncHandler');
 
-router.use(auth, requireRole('Consumer'));
+router.use(auth, requireConsumerScope);
 
 router.get('/', asyncHandler(listMine));
 router.patch('/:id/read', asyncHandler(markRead));

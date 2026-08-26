@@ -226,10 +226,6 @@ function EditForm({
           onPress={() => void save()}
         />
 
-        <ThemedText type="small" themeColor="textSecondary" style={styles.note}>
-          Your name, date of birth, valid ID and senior citizen status can only be
-          changed at the TWD office, with the supporting document.
-        </ThemedText>
       </ScreenSection>
     </>
   );
@@ -245,5 +241,4 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   errorText: { flex: 1 },
-  note: { lineHeight: 20, textAlign: 'center' },
 });

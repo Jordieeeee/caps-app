@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const { register, login, refresh, logout, me } = require('../controllers/authController');
+const { googleCallback } = require('../controllers/googleAuthController');
 const { auth } = require('../middleware/auth');
 const { requireFields } = require('../middleware/validate');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -10,6 +11,9 @@ router.post('/register', requireFields('name', 'email', 'password'), asyncHandle
 router.post('/login', requireFields('email', 'password'), asyncHandler(login));
 router.post('/refresh', requireFields('refreshToken'), asyncHandler(refresh));
 router.post('/logout', asyncHandler(logout));
+// Google sign-in: the body carries only the opaque id_token. No `role` field is
+// accepted — role is decided server-side from verified claims + the allowlist.
+router.post('/google/callback', requireFields('idToken'), asyncHandler(googleCallback));
 router.get('/me', auth, asyncHandler(me));
 
 module.exports = router;

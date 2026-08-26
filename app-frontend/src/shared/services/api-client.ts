@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 
 import { secureTokenStore } from '@/shared/services/secure-token-store';
+import { googleSessionStore } from '@/shared/services/google-session-store';
 import { isAccessTokenExpired } from '@/shared/services/jwt';
 import {
   AuthError,
@@ -203,14 +204,66 @@ export async function logout(refreshToken: string): Promise<void> {
 }
 
 /**
+ * Shared tail of both apiFetch paths: turn a Response into T or a typed error.
+ */
+async function finish<T>(response: Response): Promise<T> {
+  if (!response.ok) throw await parseError(response);
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+/**
+ * Bearer-only path for Google-flow sessions.
+ *
+ * Runs when the keychain holds no email/password session. These tokens have
+ * NO refresh machinery — a 401 means the credential is finished, so it is
+ * cleared (whose listener forces sign-out in React state) and a typed error
+ * is thrown. Deliberately not merged with the refresh path below: their
+ * failure semantics differ, and merging them is how "refresh" accidentally
+ * gets called with no refresh token.
+ *
+ * Known seam, documented on purpose: portal-shaped endpoints gate roles by
+ * exact string ('Consumer'), while google tokens carry lowercase 'consumer'.
+ * Those routes will 403 for google identities until backend billing endpoints
+ * consult ConsumerLink directly — that bridge is its own task, not something
+ * smuggled into this client.
+ */
+async function googleBearerFetch<T>(path: string, init: RequestInit): Promise<T> {
+  const session = await googleSessionStore.load();
+  if (!session) {
+    throw new AuthError(AuthErrorCode.TOKEN_EXPIRED, 'You are not signed in.', 401);
+  }
+
+  let response = await rawFetch(path, {
+    ...init,
+    headers: { ...jsonHeaders, ...init.headers, Authorization: `Bearer ${session.sessionToken}` },
+  });
+
+  if (response.status === 401) {
+    // One attempt, no refresh to fall back on — clear and surface it.
+    await googleSessionStore.clear();
+    throw new AuthError(
+      AuthErrorCode.TOKEN_EXPIRED,
+      'Your session has expired. Please sign in again.',
+      401
+    );
+  }
+
+  return finish<T>(response);
+}
+
+/**
  * Authenticated request with transparent refresh.
  *
  * Used by feature code (billing, sync, …), not by the auth screens themselves.
+ * When no email/password session exists, falls through to the Google-flow
+ * bearer path above — feature code does not need to know which system
+ * authenticated the user.
  */
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   let session = await secureTokenStore.load();
   if (!session) {
-    throw new AuthError(AuthErrorCode.TOKEN_EXPIRED, 'You are not signed in.', 401);
+    return googleBearerFetch<T>(path, init);
   }
 
   if (isAccessTokenExpired(session.accessToken, REFRESH_SKEW_MS)) {
@@ -232,9 +285,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     response = await send(refreshed.accessToken);
   }
 
-  if (!response.ok) throw await parseError(response);
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  return finish<T>(response);
 }
 
 export { API_BASE_URL };

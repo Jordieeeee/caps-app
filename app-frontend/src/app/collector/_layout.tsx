@@ -21,7 +21,25 @@ import { SessionStatusBanner } from '@/shared/components/session-status-banner';
  */
 export default function CollectorLayout() {
   const { state } = useAuth();
-  const isCollector = state.status === 'signedIn' && state.role === 'Collector';
+
+  /**
+   * Two ways to be a collector, and they are NOT interchangeable below.
+   *
+   * `passwordCollector` is the legacy session: it owns a refreshable token in
+   * secureTokenStore, and it is the only one the offline outbox can actually
+   * use (see the sync note below). `googleCollector` is the allowlist grant
+   * from /auth/google/callback.
+   *
+   * Both must pass the route guard. Admitting only the password session — as
+   * this did — put this layout out of step with the root layout's
+   * `role === 'Collector' || googleRole === 'collector'`, so an allowlisted
+   * collector hit an infinite redirect between '/' and '/collector' and
+   * crashed with "Maximum update depth exceeded". A guard here that is
+   * stricter than the root guard is always that bug.
+   */
+  const passwordCollector = state.status === 'signedIn' && state.role === 'Collector';
+  const googleCollector = state.status === 'googleSignedIn' && state.role === 'collector';
+  const isCollector = passwordCollector || googleCollector;
 
   /**
    * Start opportunistic sync for the life of the collector session.
@@ -37,10 +55,23 @@ export default function CollectorLayout() {
    * consumer path is deliberately not offline-tolerant.
    */
   useEffect(() => {
-    if (!isCollector) return;
+    // PASSWORD collectors only, and that is a real limitation, not caution.
+    // SyncService drives everything through apiFetch (api-client.ts), which
+    // authenticates from secureTokenStore and refreshes password sessions. A
+    // Google collector holds neither, so starting the monitor for them would
+    // fire authenticated calls with no credentials, collect 401s, and — via
+    // api.onSessionChange(null) in auth-context — could sign them out of a
+    // perfectly good session.
+    //
+    // KNOWN GAP: an allowlisted Google collector therefore gets NO offline
+    // outbox. They can sign in and work online, but readings taken without
+    // signal are not queued or synced. Closing this means teaching the sync
+    // path to authenticate from googleSessionStore; until then, collectors
+    // who need offline capture must use their password account.
+    if (!passwordCollector) return;
     SyncService.startSyncMonitoring();
     return () => SyncService.stopSyncMonitoring();
-  }, [isCollector]);
+  }, [passwordCollector]);
 
   /**
    * Recover this collector's history onto a phone that does not have it.
@@ -56,9 +87,12 @@ export default function CollectorLayout() {
    * past, and `startSyncMonitoring` above must not wait on a network round trip.
    */
   useEffect(() => {
-    if (!isCollector) return;
+    // Password collectors only, same reason as startSyncMonitoring above:
+    // hydrateHistory goes out over apiFetch, which a Google session cannot
+    // authenticate.
+    if (!passwordCollector) return;
     void SyncService.hydrateHistory();
-  }, [isCollector]);
+  }, [passwordCollector]);
 
   if (!isCollector) {
     return <Redirect href="/" />;
@@ -66,7 +100,12 @@ export default function CollectorLayout() {
 
   return (
     <View style={styles.container}>
-      <SessionStatusBanner sync={state.sync} />
+      {/* Only the password session has a `sync` value to report — the
+          googleSignedIn state carries no such field (types/auth.ts). Rather
+          than pass a cheerful default, the banner is omitted for Google
+          collectors: nothing is tracking their sync state, and rendering
+          "online" would be a claim this app cannot stand behind. */}
+      {state.status === 'signedIn' && <SessionStatusBanner sync={state.sync} />}
       <View style={styles.content}>
         <CollectorTabs />
       </View>

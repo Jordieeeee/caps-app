@@ -46,7 +46,10 @@ exports.create = async (req, res) => {
   const { type, subject, message } = req.body;
 
   const feedback = await Feedback.create({
-    consumerId: req.user.sub,
+    // The registry consumer, not the auth id. A Google session's sub points at
+    // google_users, and filing feedback under that id would detach it from the
+    // household the office needs to answer.
+    consumerId: req.consumerScope?.consumerIds?.[0] ?? req.user.sub,
     type,
     subject,
     message,
@@ -65,6 +68,7 @@ exports.create = async (req, res) => {
  * ownership check to get wrong for no gain.
  */
 exports.listMine = async (req, res) => {
-  const feedback = await Feedback.listByConsumer(req.user.sub);
+  const id = req.consumerScope?.consumerIds?.[0] ?? req.user.sub;
+  const feedback = id ? await Feedback.listByConsumer(id) : [];
   res.json({ feedback: feedback.map(present) });
 };

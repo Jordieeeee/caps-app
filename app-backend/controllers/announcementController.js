@@ -56,7 +56,12 @@ function present(doc) {
  * district's internal operational notices.
  */
 exports.list = async (req, res) => {
-  const notices = await Announcement.listPublishedFor(audienceFor(req.user.role));
+  // The Google flow's roles are lowercase ('consumer'/'collector') while
+  // audienceFor speaks the password system's capitalised vocabulary. Normalise
+  // rather than teach every audience helper about two role systems.
+  const GOOGLE_ROLE_ALIASES = { consumer: 'Consumer', collector: 'Collector' };
+  const role = GOOGLE_ROLE_ALIASES[req.user.role] ?? req.user.role;
+  const notices = await Announcement.listPublishedFor(audienceFor(role));
   res.json({ announcements: notices.map(present) });
 };
 

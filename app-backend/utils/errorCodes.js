@@ -18,6 +18,25 @@ const ErrorCodes = {
   ROLE_NOT_PERMITTED: 'ROLE_NOT_PERMITTED',
   /** The route exists but the operation belongs to another system (e.g. the Admin Portal). */
   NOT_SUPPORTED: 'NOT_SUPPORTED',
+  // --- consumer claim/verify flow (mirrored in app-frontend types when the
+  // mobile screens land — additive only, older clients fall back to UNKNOWN) ---
+  /** Referenced account number does not exist in the district registry. */
+  NOT_FOUND: 'NOT_FOUND',
+  /** Sliding-window failure limit hit, or OTP resend cooldown still running. */
+  RATE_LIMITED: 'RATE_LIMITED',
+  /** The Google identity already holds a claimed role. */
+  ALREADY_CLAIMED: 'ALREADY_CLAIMED',
+  /** The registry has no verified mobile number for this account. */
+  NO_MOBILE_ON_FILE: 'NO_MOBILE_ON_FILE',
+  /** Code wrong, expired, superseded, or never issued — deliberately one code. */
+  OTP_INVALID: 'OTP_INVALID',
+  /**
+   * The SMS gateway itself failed or timed out. Distinct from every other
+   * failure so the client can say "we couldn't send it" (retry makes sense,
+   * soon) rather than implying the account was wrong. Never carries gateway
+   * detail to the client.
+   */
+  SMS_DELIVERY_FAILED: 'SMS_DELIVERY_FAILED',
 };
 
 module.exports = ErrorCodes;

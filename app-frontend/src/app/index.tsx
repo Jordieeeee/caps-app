@@ -18,6 +18,17 @@ export default function Index() {
     return <ScreenLoading label="Signing you in…" />;
   }
 
+  if (state.status === 'googleSignedIn') {
+    switch (state.role) {
+      case 'unclaimed':
+        return <Redirect href="/claim/account" />;
+      case 'collector':
+        return <Redirect href="/collector" />;
+      case 'consumer':
+        return <Redirect href="/consumer" />;
+    }
+  }
+
   if (state.status !== 'signedIn') {
     return <Redirect href="/login" />;
   }

@@ -5,7 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "appfrontend",
+    "scheme": [
+      "appfrontend",
+      "com.googleusercontent.apps.822086134232-t3lq8dg9mfe36qv4skce5c2i06rotdk6",
+      "com.googleusercontent.apps.822086134232-6ah64287ciekqrpcsvfte1pl711q6l29"
+    ],
     "userInterfaceStyle": "automatic",
     "env": {
       "EXPO_PUBLIC_API_BASE_URL": "http://localhost:5001/api"
@@ -21,7 +25,12 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.appfrontend"
+      "package": "com.anonymous.appfrontend",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT"
+      ]
     },
     "web": {
       "output": "static",
@@ -54,6 +63,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "5fc3ab67-58eb-4b7f-8b3b-c4aa34dc596e"
+      }
     }
   }
 }

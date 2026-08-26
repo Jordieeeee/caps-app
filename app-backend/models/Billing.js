@@ -149,6 +149,26 @@ billingSchema.statics.listForConsumer = function listForConsumer(consumerId) {
   return this.find({ consumerId, isVoid: { $ne: true } }).sort({ period: -1, dueDate: -1 });
 };
 
+/**
+ * Same query across SEVERAL registry consumers.
+ *
+ * A Google-flow identity may hold links to more than one account, and those
+ * accounts can belong to different `consumers` documents — so "this caller's
+ * bills" is a set, not a single id. Callers pass the ids from
+ * req.consumerScope (middleware/consumer-scope.js); an empty array returns
+ * nothing rather than everything, which is the safe direction for a query
+ * whose input decides what a person is allowed to read.
+ */
+billingSchema.statics.listForConsumers = function listForConsumers(consumerIds) {
+  if (!Array.isArray(consumerIds) || consumerIds.length === 0) {
+    return this.find({ _id: null });
+  }
+  return this.find({ consumerId: { $in: consumerIds }, isVoid: { $ne: true } }).sort({
+    period: -1,
+    dueDate: -1,
+  });
+};
+
 const Billing = mongoose.model('Billing', billingSchema);
 
 module.exports = Billing;

@@ -9,6 +9,7 @@ const {
   cancelLinkRequest,
 } = require('../controllers/accountController');
 const { auth, requireRole } = require('../middleware/auth');
+const { requireConsumerScope } = require('../middleware/consumer-scope');
 const { requireFields } = require('../middleware/validate');
 const asyncHandler = require('../middleware/asyncHandler');
 
@@ -23,9 +24,16 @@ const asyncHandler = require('../middleware/asyncHandler');
  */
 router.get('/route', auth, requireRole('Collector'), asyncHandler(listRoute));
 
-router.use(auth, requireRole('Consumer'));
+// GET / admits BOTH consumer identities via requireConsumerScope; everything
+// after this line stays password-Consumer-only, because link requests and
+// unlink write against a consumers._id the Google flow does not have.
+router.get('/', auth, requireConsumerScope, asyncHandler(listMine));
 
-router.get('/', asyncHandler(listMine));
+// Read-only, both identities. The WRITE side of link requests stays below the
+// password-only guard: creating one writes against a consumers._id.
+router.get('/link-requests', auth, requireConsumerScope, asyncHandler(listLinkRequests));
+
+router.use(auth, requireRole('Consumer'));
 
 /**
  * Link requests, declared before `/:accountNumber` below.
@@ -37,7 +45,6 @@ router.get('/', asyncHandler(listMine));
  * widening the pattern.
  */
 router.post('/link-requests', requireFields('accountNumber'), asyncHandler(createLinkRequest));
-router.get('/link-requests', asyncHandler(listLinkRequests));
 router.delete('/link-requests/:id', asyncHandler(cancelLinkRequest));
 
 /**

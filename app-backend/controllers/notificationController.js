@@ -34,7 +34,14 @@ function present(doc) {
  * for what happened the last time this endpoint read a collection it did not own.
  */
 exports.listMine = async (req, res) => {
-  const notifications = await Notification.listByConsumer(req.user.sub);
+  // See billingController: the caller's registry ids come from the scope
+  // middleware. A Google consumer has no notifications of their own yet, but
+  // the ones attached to their linked registry consumer are legitimately
+  // theirs to read.
+  const ids = req.consumerScope.consumerIds;
+  const notifications = ids.length
+    ? await Notification.find({ consumerId: { $in: ids } }).sort({ createdAt: -1 })
+    : [];
   res.json({ notifications: notifications.map(present) });
 };
 
@@ -48,7 +55,16 @@ exports.listMine = async (req, res) => {
  * row belonging to someone else, so a wrong id and a foreign id are one case.
  */
 exports.markRead = async (req, res) => {
-  const notification = await Notification.markRead(req.params.id, req.user.sub);
+  // Ownership stays part of the query (see the note above), but the owning id
+  // is the REGISTRY consumer from the scope — req.user.sub is a google_users
+  // id for a Google session and would match nothing, so marking read would
+  // fail silently with a 404 on a notification the caller can plainly see.
+  const ids = req.consumerScope?.consumerIds ?? [req.user.sub];
+  let notification = null;
+  for (const id of ids) {
+    notification = await Notification.markRead(req.params.id, id);
+    if (notification) break;
+  }
   if (!notification) throw httpError(404, 'Notification not found');
   res.json({ notification: present(notification) });
 };

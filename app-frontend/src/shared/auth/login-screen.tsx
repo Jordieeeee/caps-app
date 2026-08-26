@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -15,6 +15,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth } from '@/constants/theme';
 import { useAuth } from '@/shared/auth/auth-context';
+import { GoogleSignInPanel, OrDivider } from '@/shared/auth/google-sign-in-panel';
+import { useGoogleSignIn } from '@/shared/auth/use-google-sign-in';
 import { PasswordRevealToggle } from '@/shared/components/password-reveal-toggle';
 import { ScreenMessage } from '@/shared/components/screen-message';
 import { TwdButton } from '@/shared/components/twd-button';
@@ -29,6 +31,7 @@ import {
   ClientErrorCode,
   type SignedOutReason,
 } from '@/shared/types/auth';
+import type { GoogleSession } from '@/shared/types/google-auth';
 
 /**
  * The single login screen, shared by both roles.
@@ -40,7 +43,7 @@ import {
  * it must not read as a path staff could take.
  */
 export function LoginScreen() {
-  const { state, signIn } = useAuth();
+  const { state, signIn, signInWithGoogle } = useAuth();
   const router = useRouter();
   const theme = useTwdTheme();
   const { isOnline, recheck } = useConnectivity();
@@ -51,6 +54,23 @@ export function LoginScreen() {
   const [passwordRevealed, setPasswordRevealed] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
   const [formError, setFormError] = useState<{ code: string; message: string } | null>(null);
+
+  // The Google half of this screen. Its failures are its own — they render in
+  // the panel below the divider, never in the password form's error banner,
+  // because a consumer whose Google sheet timed out has not failed to sign in
+  // with a password and must not be told they did.
+  const google = useGoogleSignIn(
+    useCallback(
+      (session: GoogleSession) => {
+        void signInWithGoogle(session).catch(() => {
+          // adoptGoogleSession only throws after clearing a bad credential;
+          // the listener has already forced sign-out. Nothing to surface here
+          // that the resulting signed-out state doesn't already say.
+        });
+      },
+      [signInWithGoogle]
+    )
+  );
 
   const busy = state.status === 'authenticating';
   const offline = isOnline === false;
@@ -251,6 +271,26 @@ export function LoginScreen() {
                 />
               </View>
 
+              {/* Google sits BELOW the password form, deliberately.
+
+                  Collectors sign in here every shift with a password, and
+                  putting a second primary-weight control above the one they
+                  came for would tax the daily user to help the occasional one.
+                  Consumers arriving for Google are reading the screen rather
+                  than pattern-matching to a remembered position, so they find
+                  it; the labelled divider is what tells them the two are
+                  alternatives and not steps.
+
+                  Rendered only where it can actually work — googleAuthConfig()
+                  returns null on web, and a button that opens nothing is worse
+                  than no button. */}
+              {google.configured && (
+                <View style={styles.googleSection}>
+                  <OrDivider />
+                  <GoogleSignInPanel controller={google} disabled={busy} />
+                </View>
+              )}
+
               {/* Section 3: consumer enrolment only, and labelled as such. Pre-login
                   we cannot know the role, so the wording — not the visibility — is
                   what keeps staff from reading this as their path. Once signed in,
@@ -366,6 +406,7 @@ const styles = StyleSheet.create({
   form: { gap: Spacing.three },
   forgot: { alignSelf: 'flex-end', marginTop: -Spacing.two },
   submit: { marginTop: Spacing.two },
+  googleSection: { gap: Spacing.three },
   notice: {
     gap: Spacing.half,
     padding: Spacing.three,

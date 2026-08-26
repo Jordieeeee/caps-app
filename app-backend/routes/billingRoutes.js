@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { listMine, create } = require('../controllers/billingController');
 const { auth, requireRole } = require('../middleware/auth');
+const { requireConsumerScope } = require('../middleware/consumer-scope');
 const asyncHandler = require('../middleware/asyncHandler');
 
 router.use(auth);
@@ -13,7 +14,7 @@ router.use(auth);
  * publicly-printed account numbers. There is deliberately no parameter here to
  * tamper with: the identity comes from the token.
  */
-router.get('/', requireRole('Consumer'), asyncHandler(listMine));
+router.get('/', requireConsumerScope, asyncHandler(listMine));
 
 /** Retained so the old write path fails loudly (410) rather than 404-ing silently. */
 router.post('/', requireRole('Admin'), asyncHandler(create));
