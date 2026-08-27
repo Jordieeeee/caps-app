@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { sync, list } = require('../controllers/serviceOrderController');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth } = require('../middleware/auth');
+const { requireCollectorScope } = require('../middleware/collector-scope');
 const { requireFields } = require('../middleware/validate');
 const asyncHandler = require('../middleware/asyncHandler');
 
@@ -8,7 +9,7 @@ router.use(auth);
 
 router.post(
   '/sync',
-  requireRole('Collector', 'Admin'),
+  requireCollectorScope({ allowAdmin: true }),
   requireFields('clientId', 'type', 'accountNumber'),
   asyncHandler(sync)
 );
@@ -23,6 +24,6 @@ router.post(
  * addresses — which is exactly why it must not stay open to a Consumer token, as it
  * was until now.
  */
-router.get('/', requireRole('Collector', 'Admin'), asyncHandler(list));
+router.get('/', requireCollectorScope({ allowAdmin: true }), asyncHandler(list));
 
 module.exports = router;

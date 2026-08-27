@@ -151,8 +151,10 @@ async function lastReadingByAccount() {
  * barangay instead. That is the honest shape of the data today and it is the
  * reason this is Collector-gated rather than open: it is the district's customer
  * list, and it goes to field staff who already carry it on paper, to nobody else.
- * When the portal adds a route assignment, filter here on `req.user.sub`'s
- * routeIds and this comment goes away.
+ * When the portal adds a route assignment, filter here on the routeIds of
+ * `req.collectorScope.collectorId` — NOT `req.user.sub`, which is a
+ * google_users._id for an allowlisted collector and matches no employee — and
+ * this comment goes away.
  *
  * `sequence` is derived — barangay, then account number — not surveyed. A real
  * walk order is a physical path through a barangay that only the district can

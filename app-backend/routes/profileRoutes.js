@@ -5,6 +5,7 @@ const {
   update: updateCollector,
 } = require('../controllers/collectorProfileController');
 const { auth, requireRole } = require('../middleware/auth');
+const { requireCollectorScope } = require('../middleware/collector-scope');
 const { requireConsumerScope } = require('../middleware/consumer-scope');
 const asyncHandler = require('../middleware/asyncHandler');
 
@@ -20,7 +21,7 @@ const asyncHandler = require('../middleware/asyncHandler');
  * `router.use` below still covers everything after them — a collector reaching
  * `GET /profile` gets a 403, not a consumer's registry record.
  */
-const collectorOnly = [auth, requireRole('Collector')];
+const collectorOnly = [auth, requireCollectorScope()];
 router.get('/collector', ...collectorOnly, asyncHandler(getCollector));
 router.patch('/collector', ...collectorOnly, asyncHandler(updateCollector));
 

@@ -16,9 +16,11 @@ const { normaliseMobile, INVALID_MOBILE_MESSAGE } = require('../utils/phone');
  * collector with unsynced work must not do.
  *
  * So this reads the document, every time it is asked. Self-scoped on
- * `req.user.sub` with no `/:id` variant, same rule as the consumer profile: a
- * collector has no business reading a colleague's employment record, and the only
- * way to guarantee that is to make the endpoint incapable of naming one.
+ * `req.collectorScope.collectorId` with no `/:id` variant, same rule as the
+ * consumer profile: a collector has no business reading a colleague's employment
+ * record, and the only way to guarantee that is to make the endpoint incapable of
+ * naming one. The scope is what makes this work for a Google-allowlisted collector
+ * too — their token's `sub` is a google_users._id and would find nothing here.
  */
 
 /**
@@ -59,7 +61,7 @@ function present(raw, email) {
 }
 
 async function loadSelf(req) {
-  const collector = await Collector.findById(req.user.sub);
+  const collector = await Collector.findById(req.collectorScope.collectorId);
   if (!collector) throw httpError(404, 'Your collector record could not be found.');
   return collector;
 }

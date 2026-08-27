@@ -9,6 +9,7 @@ const {
   cancelLinkRequest,
 } = require('../controllers/accountController');
 const { auth, requireRole } = require('../middleware/auth');
+const { requireCollectorScope } = require('../middleware/collector-scope');
 const { requireConsumerScope } = require('../middleware/consumer-scope');
 const { requireFields } = require('../middleware/validate');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -16,13 +17,19 @@ const asyncHandler = require('../middleware/asyncHandler');
 /**
  * The one Collector route in this file, declared above the Consumer guard below.
  *
- * It carries its own `auth` + `requireRole` pair rather than relying on the
+ * It carries its own `auth` + collector-scope pair rather than relying on the
  * `router.use` — that guard is what keeps every other endpoint here self-scoped to
  * one consumer, and loosening it to admit collectors would silently open
  * `GET /accounts` (another household's balance) and `DELETE /:accountNumber`
  * (unlinking someone else's meter) to them as well.
+ *
+ * `requireCollectorScope` replaced `requireRole('Collector')` so an allowlisted
+ * Google collector can load their route at all; the exact-string match rejected
+ * their lowercase 'collector' claim. This handler reads no collector identity —
+ * the route list is the same for everyone — so it takes the scope for the gate
+ * alone.
  */
-router.get('/route', auth, requireRole('Collector'), asyncHandler(listRoute));
+router.get('/route', auth, requireCollectorScope(), asyncHandler(listRoute));
 
 // GET / admits BOTH consumer identities via requireConsumerScope; everything
 // after this line stays password-Consumer-only, because link requests and
