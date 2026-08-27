@@ -6,7 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { PrinterService } from '@/collector/services/printer-service';
 import { ServiceOrderService, type ServiceOrderRow } from '@/collector/services/service-orders';
-import { useSession } from '@/shared/auth/auth-context';
+import { useCollectorIdentity } from '@/collector/collector-identity';
 import { Icon } from '@/shared/components/icon';
 import { ListError } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
@@ -96,7 +96,7 @@ export function ServiceOrderAction({ kind }: { kind: NoticeKind }) {
 function ActionForm({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow }) {
   const router = useRouter();
   const theme = useTwdTheme();
-  const { session } = useSession();
+  const { collector } = useCollectorIdentity();
   const { print, printing, canPrint, printBlockedReason } = usePrint();
   const copy = COPY[kind];
 
@@ -118,11 +118,11 @@ function ActionForm({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow 
       accountNumber: order.accountNumber,
       consumerName: order.consumerName,
       address: order.address,
-      collectorName: session.user.name,
+      collectorName: collector.name,
       confirmedAt,
       note: note.trim() || undefined,
     }),
-    [kind, order, session, note]
+    [kind, order, collector, note]
   );
 
   /**

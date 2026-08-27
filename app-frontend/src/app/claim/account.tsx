@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth } from '@/constants/theme';
+import { useAuth } from '@/shared/auth/auth-context';
 import { ScreenMessage } from '@/shared/components/screen-message';
 import { StepProgress } from '@/shared/components/step-progress';
 import { TwdButton } from '@/shared/components/twd-button';
@@ -32,6 +33,7 @@ import { ClaimErrorCode, GoogleFlowError } from '@/shared/types/google-auth';
  */
 export default function ClaimAccountScreen() {
   const router = useRouter();
+  const { signOut } = useAuth();
   const theme = useTwdTheme();
   const { isOnline, recheck } = useConnectivity();
 
@@ -147,6 +149,28 @@ export default function ClaimAccountScreen() {
                 busy={busy}
                 onPress={() => void requestChallenge()}
                 accessibilityHint="Sends a one-time code to the mobile number TWD has on record for this account"
+              />
+
+              {/* Cancel, and it is NOT a back action — there is nothing to go
+                  back to. This screen is arrived at by redirect (the root guard
+                  sends every 'unclaimed' Google identity straight here), so the
+                  history stack is empty and router.back() would do nothing.
+
+                  Cancelling an unclaimed session means ending it, so this signs
+                  out and lands them at /login — which is what someone who
+                  picked the wrong Google account actually needs. Nothing is
+                  lost: no ConsumerLink exists yet, and any code already issued
+                  simply expires unused.
+
+                  `secondary` so it reads as the way out rather than a second
+                  thing to do: outlined against the filled primary above it,
+                  same weight, clearly subordinate. */}
+              <TwdButton
+                label="Cancel"
+                variant="secondary"
+                disabled={busy}
+                onPress={() => void signOut()}
+                accessibilityHint="Signs you out and returns to the sign-in screen, so you can use a different account"
               />
             </View>
           </ScrollView>

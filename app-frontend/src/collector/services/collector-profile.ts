@@ -25,7 +25,41 @@ import { apiFetch } from '@/shared/services/api-client';
  * caches go together, from one place.
  */
 
-const STORAGE_KEY = '@collector_profile';
+/**
+ * Cache key PREFIX. The owner is appended, and that is not cosmetic.
+ *
+ * This was a single global '@collector_profile' holding whoever logged in last.
+ * On a handset used by two collectors — a shared district phone, or a test
+ * device — the second one saw the FIRST one's employment record: their name in
+ * the header, their employee number, their routes on the home screen. It is how
+ * an allowlisted Google collector opened the app and was greeted as "Angela".
+ *
+ * A cache that outlives the session that filled it must be keyed by whose it is.
+ * The owner is the AUTH identity (password: collectors._id, google: the verified
+ * email) rather than the profile's own id, because the key has to be known
+ * BEFORE the profile is fetched — that first cache read is the whole point of
+ * the cache, and on a cold offline start there is nothing else to key on.
+ */
+const STORAGE_PREFIX = '@collector_profile';
+
+/** Pre-scoping key. Read by nobody now; cleared on the next successful write. */
+const LEGACY_STORAGE_KEY = '@collector_profile';
+
+function storageKeyFor(owner: string): string {
+  return `${STORAGE_PREFIX}:${owner}`;
+}
+
+async function writeCache(owner: string, profile: CollectorProfile): Promise<void> {
+  try {
+    const cached: CachedProfile = { profile, fetchedAt: Date.now() };
+    await AsyncStorage.setItem(storageKeyFor(owner), JSON.stringify(cached));
+    // Drop the unscoped blob so a stale foreign profile cannot resurface if a
+    // future read ever falls back to it.
+    await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // A cache write failure costs the next offline open, not this read.
+  }
+}
 
 export interface CollectorServiceRecord {
   /**
@@ -77,16 +111,9 @@ interface CachedProfile {
 
 export class CollectorProfileService {
   /** GET /profile/collector. Token-scoped — there is no way to name another collector. */
-  static async pull(): Promise<CollectorProfile> {
+  static async pull(owner: string): Promise<CollectorProfile> {
     const { profile } = await apiFetch<{ profile: CollectorProfile }>('/profile/collector');
-
-    try {
-      const cached: CachedProfile = { profile, fetchedAt: Date.now() };
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(cached));
-    } catch {
-      // A cache write failure costs the next offline open, not this read.
-    }
-
+    await writeCache(owner, profile);
     return profile;
   }
 
@@ -106,25 +133,18 @@ export class CollectorProfileService {
    * so echoing back what was typed would leave the screen showing something the
    * district did not save.
    */
-  static async update(edit: { phone: string }): Promise<CollectorProfile> {
+  static async update(owner: string, edit: { phone: string }): Promise<CollectorProfile> {
     const { profile } = await apiFetch<{ profile: CollectorProfile }>('/profile/collector', {
       method: 'PATCH',
       body: JSON.stringify(edit),
     });
-
-    try {
-      const cached: CachedProfile = { profile, fetchedAt: Date.now() };
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(cached));
-    } catch {
-      // See pull(): a failed cache write costs the next offline open, not this save.
-    }
-
+    await writeCache(owner, profile);
     return profile;
   }
 
-  static async getCached(): Promise<CachedProfile | null> {
+  static async getCached(owner: string): Promise<CachedProfile | null> {
     try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      const raw = await AsyncStorage.getItem(storageKeyFor(owner));
       if (raw) return JSON.parse(raw) as CachedProfile;
     } catch {
       // Corrupt cache reads as no cache.
@@ -139,12 +159,12 @@ export class CollectorProfileService {
    * one case where the screen genuinely has nothing to show, and it must not be
    * dressed up as an empty profile.
    */
-  static async load(): Promise<CollectorProfileSnapshot> {
+  static async load(owner: string): Promise<CollectorProfileSnapshot> {
     try {
-      const profile = await this.pull();
+      const profile = await this.pull(owner);
       return { profile, fromCache: false, fetchedAt: Date.now() };
     } catch (error) {
-      const cached = await this.getCached();
+      const cached = await this.getCached(owner);
       if (!cached) throw error;
       return { profile: cached.profile, fromCache: true, fetchedAt: cached.fetchedAt };
     }

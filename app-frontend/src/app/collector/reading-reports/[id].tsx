@@ -8,7 +8,7 @@ import { newClientId } from '@/collector/services/client-id';
 import { OfflineStorage } from '@/collector/services/offline-storage';
 import { PrinterService } from '@/collector/services/printer-service';
 import { RouteAccountService, type RouteAccountRow } from '@/collector/services/route-accounts';
-import { useSession } from '@/shared/auth/auth-context';
+import { useCollectorIdentity } from '@/collector/collector-identity';
 import { Icon } from '@/shared/components/icon';
 import { ListError } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
@@ -91,7 +91,7 @@ export default function MeterReadingScreen() {
 function ReadingForm({ account }: { account: RouteAccountRow }) {
   const router = useRouter();
   const theme = useTwdTheme();
-  const { session } = useSession();
+  const { collector } = useCollectorIdentity();
   const { print, printing, canPrint, printBlockedReason } = usePrint();
   const { download, downloading, canDownload, downloadBlockedReason } = useDownload();
 
@@ -149,8 +149,8 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
     try {
       await OfflineStorage.saveMeterReading({
         id: newClientId('rdg'),
-        routeId: session.user.routeIds?.[0] ?? 'UNASSIGNED',
-        collectorId: session.user.id,
+        routeId: collector.routeIds[0] ?? 'UNASSIGNED',
+        collectorId: collector.id,
         accountNumber: account.accountNumber,
         previousReading: account.previousReading,
         currentReading: current!,
@@ -169,7 +169,7 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
         currentReading: current!,
         consumption: consumption!,
         bill,
-        collectorName: session.user.name,
+        collectorName: collector.name,
         printedAt: Date.now(),
       };
     } catch {
@@ -180,7 +180,7 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
     } finally {
       setSaving(false);
     }
-  }, [valid, bill, session, account, current, consumption, readingDate]);
+  }, [valid, bill, collector, account, current, consumption, readingDate]);
 
   const saveAndPrint = useCallback(async () => {
     const invoice = await save();

@@ -7,7 +7,8 @@ import { ThemedView } from '@/components/themed-view';
 import { usePrinter } from '@/collector/services/printer-state';
 import { SyncService } from '@/collector/services/sync-service';
 import { syncClaim, timeOfDay, type SyncClaim } from '@/collector/services/today';
-import { useAuth, useSession } from '@/shared/auth/auth-context';
+import { useCollectorIdentity } from '@/collector/collector-identity';
+import { useAuth } from '@/shared/auth/auth-context';
 import { Icon, type IconName } from '@/shared/components/icon';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
@@ -28,7 +29,7 @@ import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
  * a field worker navigates to; it is something they confirm once and forget.
  */
 export default function CollectorMore() {
-  const { session, sync } = useSession();
+  const { collector, sync } = useCollectorIdentity();
   const { state, reload } = useAsync(useCallback(() => SyncService.getSyncStatus(), []));
   const router = useRouter();
   const printer = usePrinter();
@@ -45,8 +46,8 @@ export default function CollectorMore() {
   return (
     <ScreenContainer variant="stack" onRefresh={reload} refreshing={false}>
       <ScreenHeader
-        title={session.user.name}
-        subtitle={`Collector · ${session.user.routeIds?.join(', ') || 'No routes assigned'}`}
+        title={collector.name}
+        subtitle={`Collector · ${collector.routeIds.join(', ') || 'No routes assigned'}`}
       />
 
       <ScreenSection gap={Spacing.two}>
@@ -57,7 +58,7 @@ export default function CollectorMore() {
         <NavRow
           icon="user"
           label="Account"
-          detail={session.user.employeeId ?? 'Your TWD details'}
+          detail={collector.employeeId ?? 'Your TWD details'}
           onPress={() => router.push('/collector/more/account')}
         />
         <NavRow

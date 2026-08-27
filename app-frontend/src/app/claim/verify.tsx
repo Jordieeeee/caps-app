@@ -143,6 +143,16 @@ export default function VerifyClaimScreen() {
     }
   }
 
+  /**
+   * `back()` when there is history — the normal push from step 1 — and a
+   * replace otherwise, because a deep link straight to /claim/verify has
+   * nothing to pop and back() would strand the user on this screen.
+   */
+  const goBackToAccount = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/claim/account');
+  };
+
   const submitReady = /^\d{6}$/.test(code);
 
   return (
@@ -271,6 +281,25 @@ export default function VerifyClaimScreen() {
                     style={styles.resend}
                   />
                 )}
+
+                {/* Cancel returns to step 1, where the account number can be
+                    corrected — which is the whole reason this screen needed a
+                    way out. Without it someone who mistyped their account
+                    number was stranded waiting for a code being texted to a
+                    phone that isn't theirs, and resending could never fix it.
+
+                    `secondary` so it sits under the filled Verify button as
+                    the escape route, not a competing action. Returning issues a
+                    FRESH code on resubmit and the server's cooldown still
+                    applies, so a fast round trip can hit RATE_LIMITED — said in
+                    the hint rather than left to be discovered. */}
+                <TwdButton
+                  label="Cancel"
+                  variant="secondary"
+                  disabled={busy}
+                  onPress={goBackToAccount}
+                  accessibilityHint="Returns to step 1 so you can correct your account number. A new code will be sent."
+                />
               </View>
             </View>
           </ScrollView>

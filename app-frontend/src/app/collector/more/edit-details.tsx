@@ -9,6 +9,7 @@ import {
   type CollectorProfile,
 } from '@/collector/services/collector-profile';
 import { Icon } from '@/shared/components/icon';
+import { useCollectorIdentity } from '@/collector/collector-identity';
 import { ListError, ListLoading } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { TwdButton } from '@/shared/components/twd-button';
@@ -35,7 +36,10 @@ import { Radius, Spacing } from '@/shared/theme/twd';
  */
 export default function CollectorEditDetailsScreen() {
   const router = useRouter();
-  const { state, reload } = useAsync(useCallback(() => CollectorProfileService.load(), []));
+  const { identityKey } = useCollectorIdentity();
+  const { state, reload } = useAsync(
+    useCallback(() => CollectorProfileService.load(identityKey), [identityKey])
+  );
 
   return (
     <ScreenContainer variant="stack">
@@ -76,6 +80,7 @@ function EditForm({
   onSaved: () => void;
 }) {
   const theme = useTwdTheme();
+  const { identityKey } = useCollectorIdentity();
 
   const [phone, setPhone] = useState(profile.phone ?? '');
   const [saving, setSaving] = useState(false);
@@ -105,7 +110,7 @@ function EditForm({
     setSaving(true);
     setError(null);
     try {
-      await CollectorProfileService.update({ phone: phone.trim() });
+      await CollectorProfileService.update(identityKey, { phone: phone.trim() });
       onSaved();
     } catch (e) {
       setSaving(false);

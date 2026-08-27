@@ -7,7 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { usePrinter } from '@/collector/services/printer-state';
 import { loadToday, syncClaim, timeOfDay } from '@/collector/services/today';
 import type { SyncStatus } from '@/collector/services/sync-service';
-import { useSession } from '@/shared/auth/auth-context';
+import { useCollectorIdentity } from '@/collector/collector-identity';
 import { Icon, type IconName } from '@/shared/components/icon';
 import { ListError } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
@@ -29,16 +29,16 @@ import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
  * it is status — glanceable, never competing — and the second CTA stays outlined.
  */
 export default function CollectorHome() {
-  const { session, sync } = useSession();
+  const { collector, sync } = useCollectorIdentity();
   const router = useRouter();
   const theme = useTwdTheme();
   const { state, reload } = useAsync(useCallback(() => loadToday(), []));
 
-  const routes = session.user.routeIds ?? [];
+  const routes = collector.routeIds;
 
   return (
     <ScreenContainer onRefresh={reload} refreshing={false}>
-      <ScreenHeader title={firstName(session.user.name)} subtitle={greeting()} />
+      <ScreenHeader title={firstName(collector.name)} subtitle={greeting()} />
 
       <ScreenSection gap={Spacing.three}>
         <ThemedView type="backgroundElement" style={styles.routeCard}>

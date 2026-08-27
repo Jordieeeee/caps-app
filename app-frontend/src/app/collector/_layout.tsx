@@ -2,6 +2,7 @@ import { Redirect } from 'expo-router';
 import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { CollectorIdentityProvider } from '@/collector/collector-identity';
 import CollectorTabs from '@/collector/navigation/collector-tabs';
 import { SyncService } from '@/collector/services/sync-service';
 import { useAuth } from '@/shared/auth/auth-context';
@@ -125,9 +126,15 @@ export default function CollectorLayout() {
           is deliberately not the place to invent one. */}
       {state.status === 'signedIn' && <SessionStatusBanner sync={state.sync} />}
       {googleCollector && <SessionStatusBanner sync={isOnline === false ? 'offline' : 'online'} />}
-      <View style={styles.content}>
-        <CollectorTabs />
-      </View>
+      {/* Identity resolves ONCE for the whole shell rather than per screen.
+          Six collector screens need the same employment record, and for a
+          Google collector it arrives over the network — six independent loads
+          would be six spinners and six chances to disagree. */}
+      <CollectorIdentityProvider>
+        <View style={styles.content}>
+          <CollectorTabs />
+        </View>
+      </CollectorIdentityProvider>
     </View>
   );
 }

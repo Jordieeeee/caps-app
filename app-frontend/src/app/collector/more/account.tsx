@@ -9,7 +9,7 @@ import {
   type CollectorProfile,
 } from '@/collector/services/collector-profile';
 import { timeOfDay } from '@/collector/services/today';
-import { useSession } from '@/shared/auth/auth-context';
+import { useCollectorIdentity } from '@/collector/collector-identity';
 import { Icon } from '@/shared/components/icon';
 import { ListError } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
@@ -44,10 +44,10 @@ import { Radius, Spacing } from '@/shared/theme/twd';
  * identity fields: see the long note in app-backend/models/Consumer.js.
  */
 export default function CollectorAccountScreen() {
-  const { session } = useSession();
+  const { collector, identityKey } = useCollectorIdentity();
   const router = useRouter();
   const { state, reload, refresh, refreshing } = useAsync(
-    useCallback(() => CollectorProfileService.load(), [])
+    useCallback(() => CollectorProfileService.load(identityKey), [identityKey])
   );
 
   /**
@@ -94,7 +94,7 @@ export default function CollectorAccountScreen() {
             <ThemedView type="backgroundElement" style={styles.card}>
               <DetailRow label="Full name" value={snapshot.profile.name} />
               <DetailRow label="Employee ID" value={snapshot.profile.employeeId} />
-              <DetailRow label="Email" value={snapshot.profile.email ?? session.user.email} />
+              <DetailRow label="Email" value={snapshot.profile.email ?? collector.email} />
               <DetailRow label="Mobile number" value={snapshot.profile.phone} />
               <DetailRow
                 label="Account status"

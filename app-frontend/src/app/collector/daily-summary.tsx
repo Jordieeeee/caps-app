@@ -7,7 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { OfflineStorage } from '@/collector/services/offline-storage';
 import { RouteAccountService } from '@/collector/services/route-accounts';
 import { SyncService } from '@/collector/services/sync-service';
-import { useSession } from '@/shared/auth/auth-context';
+import { useCollectorIdentity } from '@/collector/collector-identity';
 import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListError } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
@@ -132,7 +132,7 @@ async function loadDailySummary(): Promise<DailySummary> {
 type Notice = { tone: 'success' | 'danger'; text: string };
 
 export default function DailySummaryScreen() {
-  const { sync, session } = useSession();
+  const { sync, collector } = useCollectorIdentity();
   const theme = useTwdTheme();
   const { download, downloading, canDownload, downloadBlockedReason } = useDownload();
 
@@ -212,14 +212,14 @@ export default function DailySummaryScreen() {
             currentReading: row.currentReading,
             consumption: row.consumption,
             bill: calculateBill(row.consumption),
-            collectorName: session.user.name,
+            collectorName: collector.name,
             printedAt: row.timestamp,
           },
           account
         )
       );
     },
-    [download, session]
+    [download, collector]
   );
 
   const downloadReport = useCallback(() => {
@@ -227,8 +227,8 @@ export default function DailySummaryScreen() {
 
     void download(() =>
       downloadDailyReport({
-        collectorName: session.user.name,
-        routeIds: session.user.routeIds ?? [],
+        collectorName: collector.name,
+        routeIds: collector.routeIds,
         date: summary.date,
         rows: rows.map((r) => ({
           accountNumber: r.accountNumber,
@@ -242,7 +242,7 @@ export default function DailySummaryScreen() {
         generatedAt: Date.now(),
       })
     );
-  }, [download, session, summary, rows]);
+  }, [download, collector, summary, rows]);
 
   const submit = useCallback(async () => {
     const attempted = rows.filter((r) => !r.synced).map((r) => r.id);

@@ -406,25 +406,33 @@ export function useAuth(): AuthContextValue {
   return context;
 }
 
-/** Convenience for screens that are only reachable while signed in. */
-export function useSession() {
-  const { state } = useAuth();
-  if (state.status !== 'signedIn') {
-    throw new Error('useSession called outside a signed-in route.');
-  }
-  return state;
-}
+/*
+ * `useSession()` USED TO LIVE HERE. It returned the password session or threw
+ * "useSession called outside a signed-in route", and it is deleted rather than
+ * deprecated because it was a trap with no safe use.
+ *
+ * It read `state.session.user` — the employment record baked into a password
+ * JWT — so it threw for every `googleSignedIn` caller. That is fine when only
+ * password sessions exist and fatal once they don't: six collector screens
+ * called it, and the moment an allowlisted Google collector reached the
+ * collector app, every one of them died on render. The consumer home screen
+ * had already hit the same wall.
+ *
+ * Nothing throws now because nothing has to guess:
+ *   • useIdentity() below — "who is this, so I can greet them", either system.
+ *   • useCollectorIdentity() (collector/collector-identity.tsx) — the full
+ *     employment record for collector screens, resolved per identity system.
+ * A screen needing the raw password session should read `useAuth().state` and
+ * handle every status, which is the check useSession existed to skip.
+ */
 
 /**
  * The caller's display name and email, for EITHER identity system.
  *
- * useSession() above deliberately throws outside a password session — it hands
- * back `session.user` (routeIds, sync, the whole password shape) and there is
- * no honest way to synthesise that from a Google session. But a screen that
- * only wants "who is this, so I can greet them" should not have to care which
- * system authenticated the user, and shouldn't crash when the answer is the
- * other one. That crash is exactly what put a Google consumer into a render
- * loop on the home screen.
+ * A screen that only wants "who is this, so I can greet them" should not have
+ * to care which system authenticated the user, and shouldn't crash when the
+ * answer is the other one. That crash is exactly what put a Google consumer
+ * into a render loop on the home screen.
  *
  * Returns nulls rather than throwing when signed out: consumers of this are
  * presentational, and a missing name is a formatting problem, not a control-flow one.
