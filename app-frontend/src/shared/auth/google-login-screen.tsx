@@ -49,7 +49,7 @@ export function GoogleLoginScreen({
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.flex}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={[styles.content, { maxWidth: MaxContentWidth }]}>
             <View style={styles.header}>
               <Image

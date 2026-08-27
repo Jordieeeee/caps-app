@@ -88,6 +88,7 @@ export default function SyncStatusScreen() {
 
   return (
     <ScrollView
+      showsVerticalScrollIndicator={false}
       style={[styles.scrollView, { backgroundColor: theme.background }]}
       contentContainerStyle={[styles.contentContainer, insets]}>
       <ThemedView style={styles.container}>

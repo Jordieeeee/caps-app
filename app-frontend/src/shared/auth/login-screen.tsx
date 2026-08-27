@@ -158,6 +158,7 @@ export function LoginScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <SafeAreaView style={styles.flex}>
           <ScrollView
+            showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scroll}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag">
@@ -291,29 +292,25 @@ export function LoginScreen() {
                 </View>
               )}
 
-              {/* Section 3: consumer enrolment only, and labelled as such. Pre-login
-                  we cannot know the role, so the wording — not the visibility — is
-                  what keeps staff from reading this as their path. Once signed in,
-                  this screen is unmounted entirely, so it cannot appear inside a
-                  collector's session.
+              {/* Section 3: who this password form is FOR, and nothing else.
 
-                  A text link, not an outlined button. Enrolment served maybe a few
-                  hundred consumers once each, while sign-in serves every collector
-                  every shift; a full-width bordered button gave a once-per-lifetime
-                  action the same silhouette as the one action this screen exists
-                  for. Demoting it costs enrolment nothing — someone who came here to
-                  enrol is reading for it — and it stops the daily user having to
-                  choose between two equals. */}
-              <View style={[styles.enroll, { borderTopColor: theme.border }]}>
-                <ThemedText type="small" themeColor="textSecondary" style={styles.centered}>
-                  Are you a water district customer without an account?
-                </ThemedText>
-                <TwdLink
-                  label="Enroll a consumer account"
-                  onPress={() => router.push('/enroll')}
-                  disabled={busy}
-                  accessibilityHint="Opens consumer account enrolment. Water district staff accounts are created by the TWD office."
-                />
+                  Self-enrolment used to live here ("Are you a water district
+                  customer without an account?" + a link to /enroll). It is gone
+                  deliberately, not tidied away: POST /auth/register creates a
+                  password Consumer with no ConsumerLink, and models/ConsumerLink.js
+                  calls that link "the sole path every consumer-facing billing
+                  endpoint must consult". So a self-enrolled account signed in
+                  perfectly and showed ZERO bills, with no way from inside the app
+                  to attach it to a meter. Consumers reach their account through
+                  Continue with Google + the OTP claim, which is the only flow that
+                  mints a link.
+
+                  The staff line stays, and matters more now than it did. With the
+                  enrolment link gone this is the only thing on the screen that
+                  explains who the password fields are for — collectors every shift,
+                  and office-issued consumer accounts. Without it the form reads as
+                  an orphan above the Google button. */}
+              <View style={[styles.footerNote, { borderTopColor: theme.border }]}>
                 <ThemedText type="small" themeColor="textSecondary" style={styles.centered}>
                   TWD staff accounts are issued by the water district office.
                 </ThemedText>
@@ -419,7 +416,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.card,
     borderWidth: StyleSheet.hairlineWidth * 2,
   },
-  enroll: {
+  footerNote: {
     gap: Spacing.two,
     paddingTop: Spacing.four,
     borderTopWidth: StyleSheet.hairlineWidth * 2,

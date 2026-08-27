@@ -287,6 +287,7 @@ function ManagePhase({
       </View>
 
       <FlatList
+        showsVerticalScrollIndicator={false}
         data={entries}
         keyExtractor={(item) => item.id}
         refreshing={loading}

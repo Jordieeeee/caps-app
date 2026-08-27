@@ -92,6 +92,7 @@ export default function ClaimAccountScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <SafeAreaView style={styles.flex}>
           <ScrollView
+            showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scroll}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag">

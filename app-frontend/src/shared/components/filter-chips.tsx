@@ -206,6 +206,7 @@ export function FilterChips({
            * below replace it, and unlike it they are visible before the drag.
            */
           showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={false}
           onScroll={onScroll}
           scrollEventThrottle={16}
           onContentSizeChange={onContentSizeChange}

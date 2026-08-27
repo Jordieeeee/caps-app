@@ -66,6 +66,16 @@ export function ScreenContainer({
 
   return (
     <ScrollView
+      /**
+       * No scroll indicator, here and on every other scrollable in the app.
+       *
+       * This is the shell most screens are built on, so setting it here covers
+       * them in one place; the handful of screens that own their own ScrollView
+       * or FlatList set the same prop directly. If you add a new scrollable,
+       * add the prop with it — there is no global default in React Native to
+       * inherit from, so a missed one shows a bar the rest of the app doesn't.
+       */
+      showsVerticalScrollIndicator={false}
       style={[styles.scrollView, { backgroundColor: theme.background }]}
       contentContainerStyle={[styles.contentContainer, insets]}
       /**
