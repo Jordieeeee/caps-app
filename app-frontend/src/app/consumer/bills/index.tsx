@@ -4,13 +4,15 @@ import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { listBills, type Bill } from '@/consumer/services/consumer-data';
+import { listAccounts, listBills, type Account, type Bill } from '@/consumer/services/consumer-data';
 import { dueLabel, daysUntil, summarise } from '@/consumer/lib/bill-summary';
 import { formatCuM, recentUsage } from '@/consumer/lib/usage-summary';
 import { WaterUsageCard } from '@/consumer/components/water-usage';
+import { accountChipsFor } from '@/consumer/lib/account-label';
 import { FilterChips } from '@/shared/components/filter-chips';
 import { Icon } from '@/shared/components/icon';
-import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
+import { ListEmpty, ListError } from '@/shared/components/list-states';
+import { SkeletonList } from '@/shared/components/skeleton';
 import { RefreshButton, RefreshFailedNotice } from '@/shared/components/refresh-button';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
@@ -40,9 +42,20 @@ import { Radius, Spacing } from '@/shared/theme/twd';
 export default function ConsumerBillsScreen() {
   const router = useRouter();
   const { state, reload, refresh, refreshing, refreshFailed } = useAsync(
-    useCallback(() => listBills(), [])
+    useCallback(
+      async () => ({
+        bills: await listBills(),
+        // Accounts are for LABELLING the filter only, so a failure here must not
+        // take the bills down with it. An empty list degrades the chips to bare
+        // account numbers, which still work — bills without their labels are a
+        // worse screen than labels without their prettiness.
+        accounts: await listAccounts().catch(() => [] as Account[]),
+      }),
+      []
+    )
   );
   const [filter, setFilter] = useState<string | null>(null);
+  const [accountFilter, setAccountFilter] = useState<string | null>(null);
 
   return (
     <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
@@ -59,7 +72,7 @@ export default function ConsumerBillsScreen() {
 
       {state.status === 'loading' && (
         <ScreenSection>
-          <ListLoading label="Loading your bills…" />
+          <SkeletonList count={3} label="Loading your bills" />
         </ScreenSection>
       )}
 
@@ -75,9 +88,12 @@ export default function ConsumerBillsScreen() {
 
       {state.status === 'ready' && (
         <BillsBody
-          bills={state.data}
+          bills={state.data.bills}
+          accounts={state.data.accounts}
           filter={filter}
           onFilter={setFilter}
+          accountFilter={accountFilter}
+          onAccountFilter={setAccountFilter}
           onHowToPay={() => router.push('/consumer/bills/how-to-pay')}
         />
       )}
@@ -87,22 +103,71 @@ export default function ConsumerBillsScreen() {
 
 interface BillsBodyProps {
   bills: Bill[];
+  accounts: Account[];
   filter: string | null;
   onFilter: (id: string | null) => void;
+  accountFilter: string | null;
+  onAccountFilter: (id: string | null) => void;
   onHowToPay: () => void;
 }
 
-function BillsBody({ bills, filter, onFilter, onHowToPay }: BillsBodyProps) {
+function BillsBody({
+  bills,
+  accounts,
+  filter,
+  onFilter,
+  accountFilter,
+  onAccountFilter,
+  onHowToPay,
+}: BillsBodyProps) {
+  /**
+   * Does this list cover more than one water account?
+   *
+   * Derived from the bills themselves rather than fetched, so the label appears
+   * exactly when it disambiguates and never otherwise. A consumer with one house
+   * gets no extra chrome; a consumer with two never has to guess which property
+   * a row belongs to — and guessing there means paying one bill believing both
+   * are cleared. Computed over ALL bills, not the filtered `visible` set, so the
+   * label does not flicker away when a filter happens to narrow to one account.
+   */
+  const spansAccounts =
+    new Set(bills.map((b) => b.accountNumber).filter(Boolean)).size > 1;
   const theme = useTwdTheme();
-  const { totalDue, unknownAmounts, outstanding } = summarise(bills);
-  const usage = recentUsage(bills);
+  /**
+   * Account filter first, status second, and everything below reads from the
+   * account-scoped set rather than from `bills`.
+   *
+   * That is the whole point of the filter, not a detail: picking "Boot" and
+   * still seeing an Outstanding tile of ₱2,144 — the total across both
+   * properties — is the exact confusion this screen exists to remove. The
+   * summary, the usage chart and the status counts all narrow together.
+   *
+   * The STATUS filter deliberately does not feed them. Choosing "Paid" changes
+   * which rows you are reading; it does not change what you owe.
+   */
+  const inAccount = accountFilter
+    ? bills.filter((b) => b.accountNumber === accountFilter)
+    : bills;
+  const visible = filter ? inAccount.filter((b) => b.status === filter) : inAccount;
 
-  const paidCount = bills.filter((b) => b.status === 'paid').length;
-  const totalPaid = bills
+  const { totalDue, unknownAmounts, outstanding } = summarise(inAccount);
+  const usage = recentUsage(inAccount);
+
+  const totalPaid = inAccount
     .filter((b) => b.status === 'paid')
     .reduce((sum, b) => sum + (b.amount ?? 0), 0);
 
-  const visible = filter ? bills.filter((b) => b.status === filter) : bills;
+  /**
+   * One chip per account that actually has bills, labelled by PLACE.
+   *
+   * Account numbers are the wrong label for a chooser: ACC-2026-0007 and
+   * ACC-2026-0008 differ by one character in the middle of sixteen, which is a
+   * reading test rather than a choice. People know their properties by where
+   * they are — the Boot one, the Wawa one — so the chip carries the service
+   * address's distinctive part and the account number stays on every bill row
+   * underneath, where the exact identifier belongs.
+   */
+  const accountChips = accountChipsFor(bills, accounts);
 
   if (bills.length === 0) {
     return (
@@ -182,24 +247,52 @@ function BillsBody({ bills, filter, onFilter, onHowToPay }: BillsBodyProps) {
       <ScreenSection gap={Spacing.three}>
         <ThemedText type="defaultBold">Your bills</ThemedText>
 
+        {/* Account above Status, and only when there is a choice to make.
+            One account means one chip, which is a control that cannot do
+            anything — so it is not drawn at all and the screen is exactly what
+            it was before this feature existed.
+
+            Both rows carry a title once both are present. FilterChips documents
+            why: two unlabelled rows of pills are a puzzle, and the collector's
+            route screen already stacks Barangay above Status this way. */}
+        {spansAccounts && (
+          <FilterChips
+            title="Account"
+            chips={accountChips}
+            selectedId={accountFilter}
+            onSelect={onAccountFilter}
+            allLabel="All accounts"
+            allCount={bills.length}
+            accessibilityLabel="Filter bills by water account"
+          />
+        )}
+
         <FilterChips
+          title={spansAccounts ? 'Status' : undefined}
           chips={[
             {
               id: 'overdue',
               label: 'Overdue',
-              count: bills.filter((b) => b.status === 'overdue').length,
+              // Counted within the selected account, not across everything.
+              // A chip reading "Overdue 4" beside a list showing two is the
+              // kind of small lie that makes someone distrust the total.
+              count: inAccount.filter((b) => b.status === 'overdue').length,
             },
             {
               id: 'pending',
               label: 'Unpaid',
-              count: bills.filter((b) => b.status === 'pending').length,
+              count: inAccount.filter((b) => b.status === 'pending').length,
             },
-            { id: 'paid', label: 'Paid', count: paidCount },
+            {
+              id: 'paid',
+              label: 'Paid',
+              count: inAccount.filter((b) => b.status === 'paid').length,
+            },
           ]}
           selectedId={filter}
           onSelect={onFilter}
           allLabel="All"
-          allCount={bills.length}
+          allCount={inAccount.length}
           accessibilityLabel="Filter bills by status"
         />
 
@@ -213,14 +306,14 @@ function BillsBody({ bills, filter, onFilter, onHowToPay }: BillsBodyProps) {
         )}
 
         {visible.map((bill) => (
-          <BillCard key={bill.id} bill={bill} />
+          <BillCard key={bill.id} bill={bill} showAccount={spansAccounts} />
         ))}
       </ScreenSection>
     </>
   );
 }
 
-function BillCard({ bill }: { bill: Bill }) {
+function BillCard({ bill, showAccount }: { bill: Bill; showAccount: boolean }) {
   const theme = useTwdTheme();
   const unpaid = bill.status !== 'paid';
   const days = unpaid ? daysUntil(bill.dueDate) : null;
@@ -237,8 +330,18 @@ function BillCard({ bill }: { bill: Bill }) {
           <ThemedText type="defaultBold" style={styles.cardTitle}>
             {formatBillingPeriod(bill.billingPeriod)}
           </ThemedText>
-          {/* Was the account number, which real bills do not carry. The due date is
-              what a consumer needs from a list row anyway. */}
+          {/* The account number is back, and only when it earns its place.
+              It was removed when bills genuinely did not carry one; they now do
+              (billingController resolves it from connectionId), and a consumer
+              holding two properties cannot read this list safely without it.
+              "Account not recorded" for a legacy bill with no connectionId —
+              never a guess, because a bill filed under the wrong roof is the
+              failure this label exists to prevent. */}
+          {showAccount && (
+            <ThemedText type="small" themeColor="textSecondary">
+              {bill.accountNumber ?? 'Account not recorded'}
+            </ThemedText>
+          )}
           <ThemedText type="small" themeColor="textSecondary">
             Due {formatDate(bill.dueDate)}
           </ThemedText>

@@ -49,7 +49,13 @@ export default function VerifyClaimScreen() {
 
   // Deep-link safety: arriving here without step-1 params has no way to make a
   // valid submission, so go back to the start of the flow.
-  const params = useLocalSearchParams<{ accountNumber?: string; maskedNumber?: string }>();
+  const params = useLocalSearchParams<{
+    accountNumber?: string;
+    maskedNumber?: string;
+    mode?: string;
+  }>();
+  /** 'add' when an existing consumer is linking a second account. */
+  const addMode = params.mode === 'add';
   const accountNumber = typeof params.accountNumber === 'string' ? params.accountNumber : '';
   const maskedNumber = typeof params.maskedNumber === 'string' ? params.maskedNumber : '';
 
@@ -103,10 +109,25 @@ export default function VerifyClaimScreen() {
     setBusy(true);
     try {
       const session = await googleApi.verifyClaimCode(accountNumber, submitted);
-      // Store + context move together inside the context method. When it
-      // resolves, guards have already flipped and this screen is being
-      // dropped from history.
+      // Store + context move together inside the context method. The fresh
+      // token is worth adopting in BOTH modes — it restarts the 7-day window.
       await updateGoogleRole(session);
+
+      // Navigate explicitly, in BOTH modes. This used to be left to the root
+      // guard: while `claim` was mounted only for 'unclaimed', promoting the
+      // role made that guard false, Expo Router unmounted the subtree, and the
+      // user landed in the consumer area as a side effect.
+      //
+      // That side effect is gone. The root guard now mounts `claim` for
+      // 'consumer' as well, because adding a second account reuses these
+      // screens — so after a FIRST claim the guard stays true and nothing moves
+      // the user off a spent code screen. Relying on an unmount to navigate was
+      // always fragile; it silently stopped working the moment the guard
+      // widened. Saying where to go is the fix, not restoring the trick.
+      //
+      // The two destinations differ because the two journeys do: a first claim
+      // is entering the app, a second account is finishing an errand inside it.
+      router.replace(addMode ? '/consumer/account' : '/consumer');
     } catch (error) {
       setFailure(
         error instanceof GoogleFlowError
@@ -171,7 +192,7 @@ export default function VerifyClaimScreen() {
 
               <View style={styles.header}>
                 <ThemedText type="subtitle" style={styles.centered}>
-                  Enter your code
+                  {addMode ? 'Confirm the other account' : 'Enter your code'}
                 </ThemedText>
                 {/*
                   The number gets its own line at its own weight instead of
@@ -311,6 +332,8 @@ export default function VerifyClaimScreen() {
 
 const FAILURE_TITLES: Record<ClaimErrorCode, string> = {
   [ClaimErrorCode.NOT_FOUND]: 'Account not found',
+  [ClaimErrorCode.ALREADY_CLAIMED]: 'Account already linked',
+  [ClaimErrorCode.ACCOUNT_LIMIT_REACHED]: 'Account limit reached',
   [ClaimErrorCode.NO_MOBILE_ON_FILE]: 'No mobile number on file',
   [ClaimErrorCode.RATE_LIMITED]: 'Too many attempts',
   [ClaimErrorCode.SMS_DELIVERY_FAILED]: "Couldn't send the code",

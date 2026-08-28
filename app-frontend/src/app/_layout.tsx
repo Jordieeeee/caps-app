@@ -42,9 +42,10 @@ function RootNavigator() {
   const role = signedIn ? state.role : null;
 
   // Google-flow sessions drive the same guard mechanism with their own
-  // lowercase roles. 'unclaimed' admits ONLY the claim flow; 'consumer' and
-  // 'collector' map straight onto their areas. Route names match these
-  // strings exactly, which keeps this table honest at a glance.
+  // lowercase roles. 'collector' maps straight onto its area; 'consumer' gets
+  // its own area AND the claim flow, because linking a second account reuses
+  // those two screens; 'unclaimed' gets the claim flow alone. Route names match
+  // these strings exactly, which keeps this table honest at a glance.
   const googleActive = state.status === 'googleSignedIn';
   const googleRole = googleActive ? state.role : null;
 
@@ -63,19 +64,40 @@ function RootNavigator() {
         <Stack.Screen name="(auth)" />
       </Stack.Protected>
 
-      {/* The claim flow exists solely for unclaimed Google identities; verify
-          success flips the role and Expo Router drops this subtree from the
-          back stack automatically. */}
-      <Stack.Protected guard={googleActive && googleRole === 'unclaimed'}>
-        <Stack.Screen name="claim" />
-      </Stack.Protected>
-
       <Stack.Protected guard={role === 'Collector' || googleRole === 'collector'}>
         <Stack.Screen name="collector" />
       </Stack.Protected>
 
       <Stack.Protected guard={role === 'Consumer' || googleRole === 'consumer'}>
         <Stack.Screen name="consumer" />
+      </Stack.Protected>
+
+      {/* ⚠️ DECLARATION ORDER IS BEHAVIOUR HERE. Keep `claim` BELOW the two
+          area routes.
+
+          When a screen unmounts — `(auth)` does, the moment sign-in succeeds —
+          the navigator falls back to the FIRST still-mounted screen in this
+          list. It is not `index`: that is declared last and only redirects when
+          something actually navigates to '/'.
+
+          The claim flow serves two callers, and admitting the second is what
+          made the order matter:
+
+          • 'unclaimed' — the first claim. Neither area route is mounted for
+            them, so `claim` is the first survivor and they land on it. Correct.
+          • 'consumer' — someone adding a second account from Account → Add
+            another account. `consumer` is mounted for them and must come first,
+            or every sign-in falls back to `claim` and a consumer with a house
+            already linked is greeted by "Verify your account" on every launch.
+            That is exactly what happened when this block sat above `consumer`.
+
+          The guard itself has to admit both roles regardless: Stack.Protected
+          does not merely redirect, it declines to MOUNT the screen, so
+          `router.push('/claim/account?mode=add')` from a consumer session
+          navigated to nothing at all. */}
+      <Stack.Protected
+        guard={googleActive && (googleRole === 'unclaimed' || googleRole === 'consumer')}>
+        <Stack.Screen name="claim" />
       </Stack.Protected>
 
       {/* Internal allowlist tool — self-authenticating (inline portal login,

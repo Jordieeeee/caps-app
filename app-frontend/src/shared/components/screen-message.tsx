@@ -1,8 +1,9 @@
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TwdButton } from '@/shared/components/twd-button';
+import { TwdLoader } from '@/shared/components/twd-loader';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { MaxContentWidth } from '@/constants/theme';
 import { Radius, Spacing } from '@/shared/theme/twd';
@@ -84,11 +85,17 @@ export function ScreenMessage({
  * contrast: anything that spins is making progress, anything static amber is not.
  */
 export function ScreenLoading({ label = 'Loading…' }: { label?: string }) {
-  const theme = useTwdTheme();
   return (
     <ThemedView style={styles.container}>
       <View style={styles.content}>
-        <ActivityIndicator size="large" color={theme.primary} />
+        {/* The district's seal rather than a bare spinner. This is the screen a
+            consumer sees while their session is restored on a cold open — the
+            first thing the app shows, before it has anything of its own to say.
+            An unbranded ActivityIndicator there could belong to any app on the
+            phone. The label is passed through for the screen reader so the
+            announcement stays specific ("Restoring your session"), not
+            "Loading". */}
+        <TwdLoader size={76} label={label} />
         <ThemedText themeColor="textSecondary" accessibilityLiveRegion="polite">
           {label}
         </ThemedText>

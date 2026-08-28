@@ -27,12 +27,21 @@ const { amountOf, isPaid } = require('../models/Billing');
  * whoever else happens to be on the same meter has their own bills, and those were
  * never in this consumer's set to begin with.
  *
- * So the question is simply: does the caller hold one account, or several? One is
- * derivable and we report it. Several returns `outstanding: null`, because the
- * plausible alternatives are all wrong in ways that matter: attributing the full
- * balance to each account double-counts what the household owes, and splitting it
- * evenly invents a division the district never made. A consumer who reads either
- * one and pays it is going to the counter with the wrong amount.
+ * So the question is: does ONE REGISTRY CONSUMER hold one account, or several?
+ * One is derivable and we report it. Several returns `outstanding: null`, because
+ * the plausible alternatives are all wrong in ways that matter: attributing the
+ * full balance to each account double-counts what the household owes, and
+ * splitting it evenly invents a division the district never made. A consumer who
+ * reads either one and pays it is going to the counter with the wrong amount.
+ *
+ * ⚠️ THE QUESTION IS PER REGISTRY CONSUMER, NOT PER CALLER. That distinction did
+ * not exist while a caller was always exactly one `consumers` row. A Google
+ * identity holding several ConsumerLinks is not: each linked account resolves
+ * through its own service connection to its own registry consumer, and two
+ * accounts owned by two different consumers have two separately attributable
+ * balances. Bailing on "the caller holds more than one account" would report
+ * null for both, which is a worse answer than the data supports — see
+ * balancesByConnection below, which asks the question once per consumer.
  *
  * The real fix is an account reference on the bill, which belongs to the portal's
  * billing run. Until then callers must render null as "See total balance" rather
@@ -74,4 +83,52 @@ async function attributableBalance(consumerId, accountCount) {
   };
 }
 
-module.exports = { attributableBalance };
+/**
+ * Per-connection balances for a set of service connections.
+ *
+ * Groups by `consumerId` first, because that is the level the ambiguity lives at.
+ * A consumer owning exactly one connection in this set gets a real number; one
+ * owning several gets null for each of theirs, and their neighbours in the same
+ * response are unaffected.
+ *
+ * Concretely, for a Google identity linked to two accounts owned by two
+ * different registry consumers, both balances resolve. Before this, the caller
+ * "held more than one account" and both rows read "See total balance" — the app
+ * telling someone with two houses that it could not say what either owed, while
+ * the bills for each sat in the database under different consumer ids.
+ *
+ * Still NOT keyed on the bill's `connectionId`, which would settle the
+ * several-accounts-one-consumer case too. That is the real fix and it is
+ * deliberately not taken here: see the warning above about acting on a field
+ * that only test bills carry today. It changes what the district tells a
+ * household it owes and wants its own change against real billing-run data.
+ *
+ * @param {Array<{_id: any, consumerId: any}>} connections
+ * @returns {Promise<Map<string, { outstanding: number|null, paymentStatus: string }>>}
+ *          keyed by String(connection._id)
+ */
+async function balancesByConnection(connections) {
+  const countByConsumer = new Map();
+  for (const c of connections) {
+    const key = String(c.consumerId);
+    countByConsumer.set(key, (countByConsumer.get(key) || 0) + 1);
+  }
+
+  // One balance lookup per consumer, not per connection.
+  const balanceByConsumer = new Map();
+  for (const [consumerId, count] of countByConsumer) {
+    balanceByConsumer.set(consumerId, await attributableBalance(consumerId, count));
+  }
+
+  return new Map(
+    connections.map((c) => [
+      String(c._id),
+      balanceByConsumer.get(String(c.consumerId)) ?? {
+        outstanding: null,
+        paymentStatus: 'Unknown',
+      },
+    ])
+  );
+}
+
+module.exports = { attributableBalance, balancesByConnection };

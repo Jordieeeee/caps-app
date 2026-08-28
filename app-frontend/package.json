@@ -47,9 +47,12 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
+    "prestart": "node ./scripts/sync-api-url.js",
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
+    "preandroid": "node ./scripts/sync-api-url.js",
     "android": "expo run:android",
+    "preios": "node ./scripts/sync-api-url.js",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint"

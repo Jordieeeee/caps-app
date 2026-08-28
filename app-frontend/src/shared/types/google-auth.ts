@@ -59,6 +59,10 @@ export const ClaimErrorCode = {
   NOT_FOUND: 'NOT_FOUND',
   RATE_LIMITED: 'RATE_LIMITED',
   NO_MOBILE_ON_FILE: 'NO_MOBILE_ON_FILE',
+  /** The account is already linked — to this caller, or to somebody else. */
+  ALREADY_CLAIMED: 'ALREADY_CLAIMED',
+  /** Caller is at the server's cap on linked accounts. */
+  ACCOUNT_LIMIT_REACHED: 'ACCOUNT_LIMIT_REACHED',
   OTP_INVALID: 'OTP_INVALID',
   SMS_DELIVERY_FAILED: 'SMS_DELIVERY_FAILED',
   /** Backend answered 5xx or something unparseable. Client-invented value. */

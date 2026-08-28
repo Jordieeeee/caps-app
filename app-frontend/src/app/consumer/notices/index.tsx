@@ -15,7 +15,8 @@ import {
 import { formatPeso } from '@/shared/format/currency';
 import { formatDate } from '@/shared/format/date';
 import { Icon, type IconName } from '@/shared/components/icon';
-import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
+import { ListEmpty, ListError } from '@/shared/components/list-states';
+import { SkeletonList } from '@/shared/components/skeleton';
 import { RefreshButton, RefreshFailedNotice } from '@/shared/components/refresh-button';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
@@ -123,7 +124,7 @@ export default function ConsumerNoticesScreen() {
 
       {state.status === 'loading' && (
         <ScreenSection>
-          <ListLoading label="Loading notices…" />
+          <SkeletonList count={3} label="Loading notices" />
         </ScreenSection>
       )}
 

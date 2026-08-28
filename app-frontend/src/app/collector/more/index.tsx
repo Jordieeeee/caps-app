@@ -30,7 +30,7 @@ import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
  */
 export default function CollectorMore() {
   const { collector, sync } = useCollectorIdentity();
-  const { state, reload } = useAsync(useCallback(() => SyncService.getSyncStatus(), []));
+  const { state, reload, refresh, refreshing } = useAsync(useCallback(() => SyncService.getSyncStatus(), []));
   const router = useRouter();
   const printer = usePrinter();
 
@@ -44,7 +44,7 @@ export default function CollectorMore() {
   // content padding, counting the notch twice — ~83pt of dead space under the
   // header divider on a Dynamic Island device (59 absorbed + 59 re-added + 24).
   return (
-    <ScreenContainer variant="stack" onRefresh={reload} refreshing={false}>
+    <ScreenContainer variant="stack" onRefresh={() => void refresh()} refreshing={refreshing}>
       <ScreenHeader
         title={collector.name}
         subtitle={`Collector · ${collector.routeIds.join(', ') || 'No routes assigned'}`}

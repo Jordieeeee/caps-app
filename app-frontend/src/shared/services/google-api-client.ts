@@ -143,6 +143,8 @@ const BACKEND_CLAIM_CODES: readonly string[] = [
   ClaimErrorCode.NOT_FOUND,
   ClaimErrorCode.RATE_LIMITED,
   ClaimErrorCode.NO_MOBILE_ON_FILE,
+  ClaimErrorCode.ALREADY_CLAIMED,
+  ClaimErrorCode.ACCOUNT_LIMIT_REACHED,
   ClaimErrorCode.OTP_INVALID,
   ClaimErrorCode.SMS_DELIVERY_FAILED,
 ];

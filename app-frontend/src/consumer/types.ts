@@ -77,6 +77,15 @@ export interface AccountLinkRequest {
  */
 export interface Bill {
   id: string;
+  /**
+   * Which water account this bill is for, resolved server-side from the bill's
+   * `connectionId`. Null for legacy bills that predate that field.
+   *
+   * Only meaningful once a consumer can hold more than one account — which they
+   * now can. Show it when the list spans several accounts; a single-house
+   * consumer already knows whose bill they are looking at.
+   */
+  accountNumber: string | null;
   /** `YYYY-MM` as the portal stores it. Run it through `formatBillingPeriod`. */
   billingPeriod: string;
   amount: number | null;

@@ -4,7 +4,8 @@
  * ⚠️ WRITES INVENTED BILLING ROWS into `bills`, a collection the Admin Portal
  * owns. This exists so the consumer app can be demonstrated end to end against
  * an account the portal has not billed yet. Every row it writes is tagged
- * `source: 'seed-script'` and carries a `BILLSEED*` billNo so it can be found
+ * `source: 'seed-script'` and carries a `BILLSEED-<account>-<period>` billNo so
+ * it can be found
  * and removed again — see the --remove flag. Do not leave these in a database
  * anyone will read as real.
  *
@@ -85,7 +86,14 @@ const SEED_SOURCE = 'seed-script';
 
   const docs = periods.map((p) => ({
     _id: new ObjectId(),
-    billNo: `BILLSEED${p.period.replace('-', '')}`,
+    // Account number is part of the billNo, not just the period.
+    //
+    // It was `BILLSEED<period>` alone, which is unique only while exactly ONE
+    // account has ever been seeded: seeding a second one collided on the
+    // billNo index and the whole insert failed with E11000. That became
+    // reachable the moment a consumer could hold two accounts and needed bills
+    // on both to test with.
+    billNo: `BILLSEED-${accountNo}-${p.period.replace('-', '')}`,
     source: SEED_SOURCE,
     billingRunId: null,
     legacyReference: null,

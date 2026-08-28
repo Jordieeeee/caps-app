@@ -32,12 +32,12 @@ export default function CollectorHome() {
   const { collector, sync } = useCollectorIdentity();
   const router = useRouter();
   const theme = useTwdTheme();
-  const { state, reload } = useAsync(useCallback(() => loadToday(), []));
+  const { state, reload, refresh, refreshing } = useAsync(useCallback(() => loadToday(), []));
 
   const routes = collector.routeIds;
 
   return (
-    <ScreenContainer onRefresh={reload} refreshing={false}>
+    <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
       <ScreenHeader title={firstName(collector.name)} subtitle={greeting()} />
 
       <ScreenSection gap={Spacing.three}>

@@ -310,11 +310,7 @@ export function LoginScreen() {
                   explains who the password fields are for — collectors every shift,
                   and office-issued consumer accounts. Without it the form reads as
                   an orphan above the Google button. */}
-              <View style={[styles.footerNote, { borderTopColor: theme.border }]}>
-                <ThemedText type="small" themeColor="textSecondary" style={styles.centered}>
-                  TWD staff accounts are issued by the water district office.
-                </ThemedText>
-              </View>
+
             </View>
           </ScrollView>
         </SafeAreaView>
@@ -415,11 +411,5 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     borderRadius: Radius.card,
     borderWidth: StyleSheet.hairlineWidth * 2,
-  },
-  footerNote: {
-    gap: Spacing.two,
-    paddingTop: Spacing.four,
-    borderTopWidth: StyleSheet.hairlineWidth * 2,
-    alignItems: 'center',
   },
 });

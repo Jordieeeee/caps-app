@@ -5,7 +5,8 @@ import { StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { getProfile, updateProfile, type ConsumerProfile } from '@/consumer/services/consumer-data';
 import { Icon } from '@/shared/components/icon';
-import { ListError, ListLoading } from '@/shared/components/list-states';
+import { ListError } from '@/shared/components/list-states';
+import { SkeletonList } from '@/shared/components/skeleton';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { TwdButton } from '@/shared/components/twd-button';
 import { TwdTextField } from '@/shared/components/twd-text-field';
@@ -35,7 +36,7 @@ export default function ConsumerEditDetailsScreen() {
     <ScreenContainer variant="stack">
       {state.status === 'loading' && (
         <ScreenSection>
-          <ListLoading label="Loading your details…" />
+          <SkeletonList count={1} label="Loading your details" />
         </ScreenSection>
       )}
 

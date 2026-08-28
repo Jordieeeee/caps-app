@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -16,7 +16,8 @@ import {
 import { formatDate } from '@/shared/format/date';
 import { useAuth } from '@/shared/auth/auth-context';
 import { Icon } from '@/shared/components/icon';
-import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
+import { ListEmpty, ListError } from '@/shared/components/list-states';
+import { SkeletonList } from '@/shared/components/skeleton';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { AccountStatusBadge, LinkRequestBadge } from '@/shared/components/status-badge';
@@ -66,25 +67,47 @@ export default function ConsumerAccountScreen() {
       requests: requests.status === 'fulfilled' ? requests.value : null,
     };
   }, []);
-  const { state, reload } = useAsync(load);
+  const { state, reload, refresh, refreshing } = useAsync(load);
 
-  // Editing details happens on a pushed screen, so the saved value has to be
-  // picked up on the way back rather than only on a manual pull.
+  /**
+   * Editing details happens on a pushed screen, so a saved value has to be
+   * picked up on the way back rather than only on a manual pull.
+   *
+   * `refresh`, never `reload`. reload() blanks straight to the loading state,
+   * and this effect runs on EVERY focus — so every visit to the Account tab
+   * threw the details away and drew "Loading your account…" over the space
+   * where they had just been, even though nothing had changed. use-async.ts
+   * says exactly this in its own comment: screens hand `refresh` to
+   * useFocusEffect, precisely so the current answer stays on screen while the
+   * next one is fetched.
+   *
+   * The first focus is skipped because useAsync already loads on mount. Both
+   * firing meant two identical round trips every time the tab was opened cold.
+   */
+  const settledFirstFocus = useRef(false);
   useFocusEffect(
     useCallback(() => {
-      reload();
-    }, [reload])
+      if (!settledFirstFocus.current) {
+        settledFirstFocus.current = true;
+        return;
+      }
+      void refresh();
+    }, [refresh])
   );
 
   const data = state.status === 'ready' ? state.data : null;
 
   return (
-    <ScreenContainer onRefresh={reload} refreshing={false}>
+    <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
       <ScreenHeader title="Account" subtitle="Your details, water accounts and settings" />
 
+      {/* Only reachable on a genuinely cold open now — a return to this tab
+          keeps whatever was last shown. Cards rather than a spinner in a dashed
+          box: the placeholder occupies the shape the answer will, so nothing
+          jumps when it arrives. */}
       {state.status === 'loading' && (
         <ScreenSection>
-          <ListLoading label="Loading your account…" />
+          <SkeletonList count={2} label="Loading your account" />
         </ScreenSection>
       )}
 
@@ -177,15 +200,29 @@ function AccountsSection({
             <AccountCard key={account.id} account={account} />
           ))}
 
-          {/* "Request", never "Link". The tap sends a message to the office; it does
-              not attach anything, and the button is the first place that promise is
-              made. See link-account.tsx. */}
+          {/* "Add", not "Request" — and the word had to change with the route.
+              
+              This used to open link-account.tsx, which files a message for the
+              office to act on: it attaches nothing, and "Request" was the honest
+              word for that. It also 403'd for every Google consumer, because
+              POST /accounts/link-requests sits behind the password-only guard
+              and AccountLinkRequest.consumerId points at a `consumers` row a
+              Google identity does not have. The button was a live dead end.
+
+              It now runs the OTP claim, which links the account outright once
+              the consumer proves control of the mobile number the registry
+              holds FOR THAT ACCOUNT. No office, no queue. Leaving it reading
+              "Request" would be the same dishonesty the old comment guarded
+              against, pointed the other way.
+
+              link-account.tsx stays where it is, serving password consumers and
+              the one case OTP cannot: an account with no mobile on file. */}
           <TwdButton
-            label="Request another account"
+            label="Add another account"
             icon="plus"
             variant="secondary"
-            onPress={() => router.push('/consumer/account/link-account')}
-            accessibilityHint="Asks TWD to add another water account to your profile"
+            onPress={() => router.push('/claim/account?mode=add')}
+            accessibilityHint="Adds another water account by texting a code to the number TWD has on file for it"
           />
 
           <View
@@ -193,10 +230,16 @@ function AccountsSection({
             accessible
             accessibilityRole="summary">
             <Icon name="info" size={20} color={theme.textSecondary} />
+            {/* Rewritten with the button above it. This described the old
+                office-approval route — "staff add accounts by hand", "a few
+                working days" — which stopped being true when Add another
+                account started running the OTP claim and linking outright.
+                Copy that promises a wait nobody has to serve is not a harmless
+                leftover: it tells a consumer not to bother trying today. */}
             <ThemedText type="small" themeColor="textSecondary" style={styles.limitText}>
-              TWD staff add accounts by hand after checking who you are, so a request can
-              take a few working days and you may be asked to visit the office with a
-              valid ID.
+              You can add an account yourself if TWD has a mobile number on file for it —
+              we text a code to that number to confirm it is yours. If there is no number
+              on file, visit the TWD office with a valid ID and staff will add it for you.
             </ThemedText>
           </View>
         </>
@@ -427,10 +470,14 @@ function DetailsSection({
         accessible
         accessibilityRole="summary">
         <Icon name="info" size={20} color={theme.textSecondary} />
+        {/* Two lines, not four. It sits between the details card and the
+            account list, so every line it spends is a line of distance between
+            the consumer and what they came to this tab for. The full list of
+            office-only fields lives on the edit screen, next to the fields
+            themselves, where it is an answer rather than a preamble. */}
         <ThemedText type="small" themeColor="textSecondary" style={styles.limitText}>
-          You can change your mobile number and mailing address here. Your name, date of
-          birth, valid ID and senior citizen status are changed at the TWD office, with
-          the supporting document.
+          Mobile number and mailing address can be changed here. Everything else needs a
+          visit to the TWD office with a supporting document.
         </ThemedText>
       </View>
     </ScreenSection>

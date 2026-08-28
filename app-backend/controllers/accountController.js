@@ -6,7 +6,7 @@ const MeterReading = require('../models/MeterReading');
 const ServiceConnection = require('../models/ServiceConnection');
 const httpError = require('../utils/httpError');
 const ErrorCodes = require('../utils/errorCodes');
-const { attributableBalance } = require('../utils/accountPaymentSummary');
+const { balancesByConnection } = require('../utils/accountPaymentSummary');
 const { barangayOf, summarise } = require('../utils/barangay');
 const { displayName } = require('../utils/consumerIdentity');
 const { formatAddress } = require('../utils/address');
@@ -51,17 +51,25 @@ exports.listMine = async (req, res) => {
   const accountByNumber = new Map(accounts.map((a) => [a.accountNumber, a]));
 
   /**
-   * One balance, resolved once and applied to each row.
+   * A balance PER CONNECTION, resolved per registry consumer.
    *
-   * The bills belong to the consumer rather than to any one meter, so this is a
-   * single fact about the caller — not something to re-derive per account. See
-   * utils/accountPaymentSummary.js for why holding several accounts makes it
-   * unattributable rather than divisible.
+   * This was one balance for the whole response, computed from consumerIds[0]
+   * and blanked whenever the caller held more than one account. That was right
+   * while a caller was always a single `consumers` row — their bills genuinely
+   * cannot be split per meter, and inventing a division is how somebody pays
+   * the wrong amount.
+   *
+   * It is wrong for a Google identity holding several ConsumerLinks, which is
+   * now a thing that exists. Two linked accounts owned by two different registry
+   * consumers have two separately attributable balances, and the old shape
+   * reported null for both — the account list telling a consumer with two houses
+   * that it could not say what either owed, while each one's bills sat in the
+   * database under its own consumer id.
+   *
+   * balancesByConnection asks the question once per consumer and still returns
+   * null where it genuinely cannot answer: one consumer, several meters.
    */
-  // Still deliberately unattributable across several meters — see
-  // utils/accountPaymentSummary.js. Only a single-connection caller gets a
-  // number, and the id it is computed from is the one that owns the bills.
-  const balance = await attributableBalance(consumerIds[0], connections.length);
+  const balances = await balancesByConnection(connections);
 
   const rows = connections.map((connection) => {
     const account = accountByNumber.get(connection.accountNo) || null;
@@ -82,7 +90,10 @@ exports.listMine = async (req, res) => {
        * record-creation date and is meaningless against live data.
        */
       linkedDate: connection.dateConnected ? connection.dateConnected.toISOString() : undefined,
-      ...balance,
+      ...(balances.get(String(connection._id)) ?? {
+        outstanding: null,
+        paymentStatus: 'Unknown',
+      }),
     };
   });
 

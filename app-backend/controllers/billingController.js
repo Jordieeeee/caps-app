@@ -1,4 +1,5 @@
 const Billing = require('../models/Billing');
+const ServiceConnection = require('../models/ServiceConnection');
 const { amountOf, isPaid, consumptionOf } = require('../models/Billing');
 const httpError = require('../utils/httpError');
 const ErrorCodes = require('../utils/errorCodes');
@@ -41,11 +42,17 @@ function daysOverdue(dueDate, now) {
  * can say "not recorded" instead of rendering 0 m³ — which reads as "you used no
  * water" on a bill that charged for some.
  *
- * ⚠️ Still no `accountNumber`. Newer bills do carry `connectionId`, but resolving
- * it to an account number is a second query and a change to per-meter balance
- * attribution — see the note in models/Billing.js. The client groups by consumer.
+ * `accountNumber` is resolved from the bill's `connectionId`, and it stopped
+ * being optional the moment a consumer could hold two houses. A list mixing two
+ * properties' bills with nothing naming either is not a cosmetic problem: it is
+ * how somebody pays one house believing they have cleared both.
+ *
+ * Null where a bill carries no `connectionId` — legacy imports predate the
+ * field. Null is the honest answer there and the client says "Account not
+ * recorded"; inventing an attribution would put a real bill under the wrong
+ * roof, which is the exact failure this field exists to prevent.
  */
-function present(bill, now) {
+function present(bill, now, accountByConnection) {
   const paid = isPaid(bill);
   const overdueDays = paid ? 0 : daysOverdue(bill.dueDate, now);
   const status = paid ? 'paid' : overdueDays > 0 ? 'overdue' : 'pending';
@@ -53,6 +60,9 @@ function present(bill, now) {
 
   return {
     id: String(bill._id),
+    accountNumber: bill.connectionId
+      ? (accountByConnection.get(String(bill.connectionId)) ?? null)
+      : null,
     billingPeriod: bill.period,
     amount: amountOf(bill),
     dueDate: bill.dueDate.toISOString(),
@@ -82,7 +92,23 @@ exports.listMine = async (req, res) => {
   // for a Google one, and only the middleware knows how to turn either into
   // the set of registry consumers this caller may read.
   const bills = await Billing.listForConsumers(req.consumerScope.consumerIds);
-  res.json({ bills: bills.map((b) => present(b, now)) });
+
+  // One extra query for the whole page rather than one per bill. Only the
+  // connections these bills actually reference are fetched, and a caller with a
+  // single house pays for a lookup over a single id.
+  const connectionIds = [
+    ...new Set(bills.map((b) => b.connectionId).filter(Boolean).map(String)),
+  ];
+  const connections = connectionIds.length
+    ? await ServiceConnection.find({ _id: { $in: connectionIds } })
+        .select('accountNo')
+        .lean()
+    : [];
+  const accountByConnection = new Map(
+    connections.map((c) => [String(c._id), c.accountNo || null])
+  );
+
+  res.json({ bills: bills.map((b) => present(b, now, accountByConnection)) });
 };
 
 /**

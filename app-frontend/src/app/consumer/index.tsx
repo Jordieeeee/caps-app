@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -8,16 +8,21 @@ import {
   listAccounts,
   listBills,
   listNotices,
+  type Account,
   type Bill,
   type ConsumerProfile,
   type Notice,
 } from '@/consumer/services/consumer-data';
+import { accountChipsFor } from '@/consumer/lib/account-label';
 import { dueLabel, summarise, type Urgency } from '@/consumer/lib/bill-summary';
 import { recentUsage } from '@/consumer/lib/usage-summary';
+import { BillCalendarButton } from '@/consumer/components/bill-calendar';
 import { WaterUsageSummary } from '@/consumer/components/water-usage';
 import { useIdentity } from '@/shared/auth/auth-context';
+import { FilterChips } from '@/shared/components/filter-chips';
 import { Icon } from '@/shared/components/icon';
-import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
+import { ListEmpty, ListError } from '@/shared/components/list-states';
+import { SkeletonList } from '@/shared/components/skeleton';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { NoticeBadge, noticeTone, useToneColor } from '@/shared/components/status-badge';
@@ -68,10 +73,21 @@ export default function ConsumerHome() {
       })),
     []
   );
-  const { state, reload } = useAsync(load);
+  const { state, reload, refresh, refreshing } = useAsync(load);
+
+  /**
+   * Which account Home is answering for. Null means "all of them".
+   *
+   * Home exists to answer one question — what do I owe and when — and a
+   * consumer with two properties has two answers to it. Merging them is still
+   * the default, because "what do I owe TWD in total" is the question someone
+   * about to pay is asking. The filter is how they get the other answer without
+   * leaving the screen.
+   */
+  const [accountFilter, setAccountFilter] = useState<string | null>(null);
 
   return (
-    <ScreenContainer onRefresh={reload} refreshing={false}>
+    <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
       {/* The REGISTRY given name, taken from the portal's own `firstName`
           field rather than sliced out of the full name. Filipino given names
           are frequently compound — this household's is literally "Mark
@@ -90,11 +106,20 @@ export default function ConsumerHome() {
           email
         )}
         subtitle={greeting()}
+        /* Top-right, on the title's own row, so it costs no vertical space.
+           Rendered whatever the load state: the date is true before the bills
+           arrive, and a header control that appears late makes the screen jump
+           under the reader. With no bills the calendar simply has no dots. */
+        action={
+          <BillCalendarButton
+            bills={state.status === 'ready' ? billsFor(state.data.bills, accountFilter) : []}
+          />
+        }
       />
 
       {state.status === 'loading' && (
         <ScreenSection>
-          <ListLoading label="Checking your bills…" />
+          <SkeletonList count={2} label="Checking your bills" />
         </ScreenSection>
       )}
 
@@ -124,8 +149,15 @@ export default function ConsumerHome() {
 
       {state.status === 'ready' && state.data.accounts.length > 0 && (
         <>
+          <HomeAccountFilter
+            bills={state.data.bills}
+            accounts={state.data.accounts}
+            selected={accountFilter}
+            onSelect={setAccountFilter}
+          />
+
           <ScreenSection>
-            <BillSummaryCard bills={state.data.bills} />
+            <BillSummaryCard bills={billsFor(state.data.bills, accountFilter)} />
           </ScreenSection>
 
           {/* Second, never first. Home answers "what do I owe and when" before
@@ -133,7 +165,7 @@ export default function ConsumerHome() {
               a big bill, it is the one that explains the first answer. Rendered
               only when a bill actually carries a reading, so it cannot become an
               empty box promising data the district has not sent. */}
-          <UsageSummary bills={state.data.bills} />
+          <UsageSummary bills={billsFor(state.data.bills, accountFilter)} />
 
           <ScreenSection gap={Spacing.two}>
             <TwdButton
@@ -174,6 +206,18 @@ function BillSummaryCard({ bills }: { bills: Bill[] }) {
   const router = useRouter();
   const { outstanding, totalDue, next, daysUntilDue, urgency } = summarise(bills);
 
+  /**
+   * How many water accounts the unpaid bills span.
+   *
+   * The total below merges every account the consumer holds, which is the right
+   * answer to "what do I owe TWD" and a dangerous one to leave unlabelled: a
+   * consumer with two houses reading a single ₱2,144 can pay one property's
+   * bill believing both are settled. Naming the span is the cheapest honest
+   * fix — the per-account figures live one tap away on the Account tab, which
+   * now knows each balance separately.
+   */
+  const accountsDue = new Set(outstanding.map((b) => b.accountNumber).filter(Boolean)).size;
+
   const accent = urgencyColor(urgency, theme);
 
   if (!next) {
@@ -196,7 +240,9 @@ function BillSummaryCard({ bills }: { bills: Bill[] }) {
     <Pressable
       onPress={() => router.push('/consumer/bills')}
       accessibilityRole="button"
-      accessibilityLabel={`Total due ${formatPeso(totalDue)}. ${dueLabel(daysUntilDue)}. Opens your bills.`}
+      accessibilityLabel={`Total due ${formatPeso(totalDue)}${
+        accountsDue > 1 ? ` across ${accountsDue} accounts` : ''
+      }. ${dueLabel(daysUntilDue)}. Opens your bills.`}
       style={({ pressed }) => [
         styles.summaryCard,
         {
@@ -206,7 +252,11 @@ function BillSummaryCard({ bills }: { bills: Bill[] }) {
       ]}>
       <View style={styles.summaryTop}>
         <ThemedText type="small" themeColor="textSecondary">
-          {outstanding.length === 1 ? 'Total due' : `Total due · ${outstanding.length} bills`}
+          {outstanding.length === 1
+            ? 'Total due'
+            : accountsDue > 1
+              ? `Total due · ${outstanding.length} bills · ${accountsDue} accounts`
+              : `Total due · ${outstanding.length} bills`}
         </ThemedText>
         {/* Icon + words, never colour alone — an overdue bill has to read as
             overdue in greyscale and in direct sun. */}
@@ -231,8 +281,12 @@ function BillSummaryCard({ bills }: { bills: Bill[] }) {
       </ThemedText>
 
       <ThemedText type="small" themeColor="textSecondary">
-        {/* No account number: real bills carry no account reference (see
-            consumer/types.ts). The mock had one, which is why it rendered here. */}
+        {/* The account number is here again, and only when it disambiguates.
+            It was dropped when real bills genuinely carried no account
+            reference; billingController resolves one from connectionId now.
+            This line names the SOONEST unpaid bill, so with two houses it is
+            the difference between "pay this" and "pay this, for that house". */}
+        {accountsDue > 1 && next.accountNumber ? `${next.accountNumber} · ` : ''}
         {formatBillingPeriod(next.billingPeriod)} · due {formatDate(next.dueDate)}
       </ThemedText>
 
@@ -244,6 +298,52 @@ function BillSummaryCard({ bills }: { bills: Bill[] }) {
         </View>
       )}
     </Pressable>
+  );
+}
+
+/** Bills for the chosen account, or all of them when nothing is chosen. */
+function billsFor(bills: Bill[], accountNumber: string | null): Bill[] {
+  return accountNumber ? bills.filter((b) => b.accountNumber === accountNumber) : bills;
+}
+
+/**
+ * The account chooser, drawn only when there is a choice.
+ *
+ * One account means one chip — a control that cannot change anything — so it is
+ * not rendered at all and Home is exactly the screen it was before this
+ * existed. Same rule as the Bills filter, and the same labels: properties are
+ * named by place, because ACC-2026-0007 and ACC-2026-0008 differ by one
+ * character in the middle of sixteen.
+ *
+ * Both cards below it narrow together. A filter that scoped the money but left
+ * "Past 3 months used" summing two houses would be worse than no filter: the
+ * two figures would look like they belonged to the same meter.
+ */
+function HomeAccountFilter({
+  bills,
+  accounts,
+  selected,
+  onSelect,
+}: {
+  bills: Bill[];
+  accounts: Account[];
+  selected: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  const chips = accountChipsFor(bills, accounts);
+  if (chips.length < 2) return null;
+
+  return (
+    <ScreenSection>
+      <FilterChips
+        chips={chips}
+        selectedId={selected}
+        onSelect={onSelect}
+        allLabel="All accounts"
+        allCount={bills.length}
+        accessibilityLabel="Show what you owe for one water account, or all of them"
+      />
+    </ScreenSection>
   );
 }
 
@@ -259,9 +359,20 @@ function UsageSummary({ bills }: { bills: Bill[] }) {
   const usage = recentUsage(bills);
   if (!usage) return null;
 
+  // recentUsage sums each month across every account the consumer holds, so a
+  // two-house total is not a figure anyone can check against one meter. Saying
+  // so costs a line; leaving it unsaid invites someone to compare it with the
+  // reading on their own meter and conclude the app is wrong.
+  const accounts = new Set(bills.map((b) => b.accountNumber).filter(Boolean)).size;
+
   return (
     <ScreenSection>
       <WaterUsageSummary usage={usage} />
+      {accounts > 1 && (
+        <ThemedText type="small" themeColor="textSecondary">
+          Combined across your {accounts} water accounts.
+        </ThemedText>
+      )}
     </ScreenSection>
   );
 }

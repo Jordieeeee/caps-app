@@ -67,6 +67,22 @@ export function ScreenContainer({
   return (
     <ScrollView
       /**
+       * iOS must NOT add its own safe-area inset on top of ours.
+       *
+       * `contentInsetAdjustmentBehavior` defaults to 'automatic', which quietly
+       * adds the top and bottom safe areas to a scroll view it believes fills
+       * the screen. useContentInsets already reserves exactly that space as
+       * padding — deliberately, so one number covers iOS, Android and web
+       * (read its comment: "one mechanism and one number"). What it never did
+       * was switch the OTHER mechanism off, so on iOS every screen in the app
+       * reserved the safe area twice: content sat under the status bar at the
+       * top and left a screenful of dead space to scroll through at the bottom.
+       *
+       * 'never' makes the hook's padding the single source of truth, which is
+       * what it was always documented to be.
+       */
+      contentInsetAdjustmentBehavior="never"
+      /**
        * No scroll indicator, here and on every other scrollable in the app.
        *
        * This is the shell most screens are built on, so setting it here covers

@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -34,6 +34,16 @@ import { ClaimErrorCode, GoogleFlowError } from '@/shared/types/google-auth';
 export default function ClaimAccountScreen() {
   const router = useRouter();
   const { signOut } = useAuth();
+  /**
+   * 'add' when an existing consumer came here from Account → Add another
+   * account; absent on the first claim, which the root layout redirects to.
+   *
+   * Only two things vary on it — the words, and what Cancel means — because
+   * the mechanism underneath is identical either way: prove control of the
+   * mobile number the registry holds for this account number.
+   */
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const addMode = mode === 'add';
   const theme = useTwdTheme();
   const { isOnline, recheck } = useConnectivity();
 
@@ -74,7 +84,13 @@ export default function ClaimAccountScreen() {
       // account number is not secret and was already sent in plaintext.
       router.push({
         pathname: '/claim/verify',
-        params: { accountNumber: accountNumber.trim(), maskedNumber: challenge.maskedNumber },
+        params: {
+          accountNumber: accountNumber.trim(),
+          maskedNumber: challenge.maskedNumber,
+          // Step 2 needs it for the same two reasons step 1 did: its wording,
+          // and where a successful verify lands.
+          ...(addMode ? { mode: 'add' } : {}),
+        },
       });
     } catch (error) {
       setFailure(
@@ -103,11 +119,15 @@ export default function ClaimAccountScreen() {
 
               <View style={styles.header}>
                 <ThemedText type="subtitle" style={styles.centered}>
-                  Verify your account
+                  {addMode ? 'Add another account' : 'Verify your account'}
                 </ThemedText>
                 <ThemedText themeColor="textSecondary" style={styles.centered}>
-                  Enter the account number printed on your TWD bill. We&apos;ll text a
-                  verification code to the mobile number the office has on file.
+                  {addMode
+                    ? // Names the other property explicitly. Someone holding two
+                      // bills needs to know which number to copy, and "your TWD
+                      // bill" is ambiguous the moment there is more than one.
+                      "Enter the account number printed on the bill for your other property. We'll text a verification code to the mobile number the office has on file for that account."
+                    : "Enter the account number printed on your TWD bill. We'll text a verification code to the mobile number the office has on file."}
                 </ThemedText>
               </View>
 
@@ -151,26 +171,36 @@ export default function ClaimAccountScreen() {
                 accessibilityHint="Sends a one-time code to the mobile number TWD has on record for this account"
               />
 
-              {/* Cancel, and it is NOT a back action — there is nothing to go
-                  back to. This screen is arrived at by redirect (the root guard
-                  sends every 'unclaimed' Google identity straight here), so the
-                  history stack is empty and router.back() would do nothing.
+              {/* Cancel means two different things here, and getting it wrong
+                  would be severe in one direction.
 
-                  Cancelling an unclaimed session means ending it, so this signs
-                  out and lands them at /login — which is what someone who
-                  picked the wrong Google account actually needs. Nothing is
-                  lost: no ConsumerLink exists yet, and any code already issued
-                  simply expires unused.
+                  FIRST CLAIM: there is nothing to go back to — the root guard
+                  redirects every 'unclaimed' identity straight to this screen,
+                  so the history stack is empty and router.back() would be a
+                  dead button. The only way out of an unclaimed session is to
+                  end it, which is what someone who picked the wrong Google
+                  account needs. Nothing is lost: no ConsumerLink exists yet.
+
+                  ADDING ANOTHER: the caller is a signed-in consumer with a
+                  house already linked. Signing them out here would be a
+                  destructive answer to "never mind" — they came from their
+                  account list and that is where Cancel returns them.
 
                   `secondary` so it reads as the way out rather than a second
-                  thing to do: outlined against the filled primary above it,
-                  same weight, clearly subordinate. */}
+                  thing to do: outlined against the filled primary above it. */}
               <TwdButton
                 label="Cancel"
                 variant="secondary"
                 disabled={busy}
-                onPress={() => void signOut()}
-                accessibilityHint="Signs you out and returns to the sign-in screen, so you can use a different account"
+                onPress={() => {
+                  if (addMode) router.replace('/consumer/account');
+                  else void signOut();
+                }}
+                accessibilityHint={
+                  addMode
+                    ? 'Returns to your accounts without adding one'
+                    : 'Signs you out and returns to the sign-in screen, so you can use a different account'
+                }
               />
             </View>
           </ScrollView>
@@ -185,6 +215,8 @@ export default function ClaimAccountScreen() {
  * backend's message already says which. */
 const FAILURE_TITLES: Record<ClaimErrorCode, string> = {
   [ClaimErrorCode.NOT_FOUND]: 'Account not found',
+  [ClaimErrorCode.ALREADY_CLAIMED]: 'Account already linked',
+  [ClaimErrorCode.ACCOUNT_LIMIT_REACHED]: 'Account limit reached',
   [ClaimErrorCode.NO_MOBILE_ON_FILE]: 'No mobile number on file',
   [ClaimErrorCode.RATE_LIMITED]: 'Too many attempts',
   [ClaimErrorCode.SMS_DELIVERY_FAILED]: "Couldn't send the code",

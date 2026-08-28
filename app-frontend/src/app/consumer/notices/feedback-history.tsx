@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -7,7 +7,8 @@ import { ThemedView } from '@/components/themed-view';
 import { feedbackOption } from '@/consumer/feedback-options';
 import { listMyFeedback, type Feedback } from '@/consumer/services/consumer-data';
 import { Icon } from '@/shared/components/icon';
-import { ListEmpty, ListError, ListLoading } from '@/shared/components/list-states';
+import { ListEmpty, ListError } from '@/shared/components/list-states';
+import { SkeletonList } from '@/shared/components/skeleton';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { FeedbackBadge } from '@/shared/components/status-badge';
 import { formatDate } from '@/shared/format/date';
@@ -31,21 +32,34 @@ import { Radius, Spacing } from '@/shared/theme/twd';
  */
 export default function ConsumerFeedbackHistoryScreen() {
   const router = useRouter();
-  const { state, reload } = useAsync(useCallback(() => listMyFeedback(), []));
+  const { state, reload, refresh, refreshing } = useAsync(useCallback(() => listMyFeedback(), []));
 
-  // Refetch on focus so a message sent on the form screen is present when the
-  // consumer comes back here, rather than only after a manual pull.
+  /**
+   * Refetch on focus so a message sent on the form screen is present when the
+   * consumer comes back, rather than only after a manual pull.
+   *
+   * `refresh` keeps the existing messages on screen while it does — reload()
+   * blanked them to a spinner on every return, which is a poor answer to
+   * "did my message send?".
+   *
+   * First focus skipped: useAsync already loads on mount.
+   */
+  const settledFirstFocus = useRef(false);
   useFocusEffect(
     useCallback(() => {
-      reload();
-    }, [reload])
+      if (!settledFirstFocus.current) {
+        settledFirstFocus.current = true;
+        return;
+      }
+      void refresh();
+    }, [refresh])
   );
 
   return (
-    <ScreenContainer variant="stack" onRefresh={reload} refreshing={false}>
+    <ScreenContainer variant="stack" onRefresh={() => void refresh()} refreshing={refreshing}>
       {state.status === 'loading' && (
         <ScreenSection>
-          <ListLoading label="Loading your feedback…" />
+          <SkeletonList count={3} label="Loading your feedback" />
         </ScreenSection>
       )}
 

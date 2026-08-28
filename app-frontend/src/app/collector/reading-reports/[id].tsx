@@ -54,10 +54,10 @@ const IMPLAUSIBLE_CONSUMPTION = 100;
  */
 export default function MeterReadingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { state, reload } = useAsync(useCallback(() => RouteAccountService.get(id), [id]));
+  const { state, reload, refresh, refreshing } = useAsync(useCallback(() => RouteAccountService.get(id), [id]));
 
   return (
-    <ScreenContainer variant="stack" onRefresh={reload} refreshing={false}>
+    <ScreenContainer variant="stack" onRefresh={() => void refresh()} refreshing={refreshing}>
       {state.status === 'loading' && (
         <ScreenSection>
           <SkeletonList count={2} label="Loading account" />

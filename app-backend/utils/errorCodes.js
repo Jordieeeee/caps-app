@@ -26,6 +26,8 @@ const ErrorCodes = {
   RATE_LIMITED: 'RATE_LIMITED',
   /** The Google identity already holds a claimed role. */
   ALREADY_CLAIMED: 'ALREADY_CLAIMED',
+  /** Caller already holds the maximum number of linked accounts. */
+  ACCOUNT_LIMIT_REACHED: 'ACCOUNT_LIMIT_REACHED',
   /** The registry has no verified mobile number for this account. */
   NO_MOBILE_ON_FILE: 'NO_MOBILE_ON_FILE',
   /** Code wrong, expired, superseded, or never issued — deliberately one code. */

@@ -1,5 +1,5 @@
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -136,15 +136,29 @@ export default function DailySummaryScreen() {
   const theme = useTwdTheme();
   const { download, downloading, canDownload, downloadBlockedReason } = useDownload();
 
-  const { state, reload } = useAsync(useCallback(() => loadDailySummary(), []));
+  const { state, reload, refresh, refreshing } = useAsync(useCallback(() => loadDailySummary(), []));
   const [submitting, setSubmitting] = useState(false);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [notice, setNotice] = useState<Notice | null>(null);
 
+  /**
+   * `refresh`, not `reload` — this runs on every focus, and reload() blanks to
+   * the loading state first. A collector returning from a reading detail saw
+   * the whole day's summary replaced by a spinner and then put back, which on
+   * a screen about work already filed reads as work lost.
+   *
+   * First focus skipped: useAsync loads on mount, so both firing meant the
+   * summary was built twice every time the tab was opened.
+   */
+  const settledFirstFocus = useRef(false);
   useFocusEffect(
     useCallback(() => {
-      reload();
-    }, [reload])
+      if (!settledFirstFocus.current) {
+        settledFirstFocus.current = true;
+        return;
+      }
+      void refresh();
+    }, [refresh])
   );
 
   const summary = useMemo(
@@ -298,7 +312,7 @@ export default function DailySummaryScreen() {
   }, [rows, reload]);
 
   return (
-    <ScreenContainer onRefresh={reload} refreshing={false}>
+    <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
       <ScreenHeader title="Daily Summary" subtitle="Today's meter readings" />
 
       <ScreenSection gap={Spacing.three}>

@@ -43,6 +43,25 @@ const MSG_ACCOUNT_NOT_FOUND = "We couldn't find that account number.";
 const MSG_NO_MOBILE_ON_FILE =
   'no mobile number on file — contact TWD to register one';
 const MSG_ALREADY_CLAIMED = 'This account has already been claimed.';
+const MSG_ALREADY_YOURS = 'This account is already on your profile.';
+
+/**
+ * How many water accounts one identity may hold at once.
+ *
+ * A cap has to exist before the claim endpoints admit repeat callers: without
+ * one, "link another account" is an unbounded loop that costs an SMS per turn
+ * and hands one login the whole district if it is ever run against a leaked
+ * list of account numbers. Five matches MAX_PENDING_REQUESTS in
+ * accountController — two houses is the real case, five leaves room for a
+ * family, and it stops one profile becoming a landlord's portal.
+ *
+ * types/auth.ts in the app already told clients "a server-enforced cap" existed.
+ * Until now it did not. This is it.
+ */
+const MAX_LINKED_ACCOUNTS = 5;
+const MSG_ACCOUNT_LIMIT_REACHED =
+  `You can have up to ${MAX_LINKED_ACCOUNTS} water accounts on one profile. ` +
+  'Please contact the Tanauan City Water District office if you need another.';
 // One wording for wrong / expired / superseded / never-issued. Deliberately
 // does NOT say which — see the class comment.
 const MSG_VERIFY_FAILED = 'Verification failed. Please try again.';
@@ -174,6 +193,37 @@ exports.claimAccount = async (req, res) => {
     throw httpError(429, MSG_RESEND_COOLDOWN, ErrorCodes.RATE_LIMITED);
   }
 
+  /**
+   * Both guards run BEFORE resolveAccountMobile, and that ordering is the point:
+   * everything below this line costs an SMS and consumes the caller's resend
+   * budget. A consumer who is at their cap, or who typed an account somebody
+   * else already holds, can be told so without a text being sent and without
+   * a minute-long cooldown they gained nothing from.
+   *
+   * Neither case was reachable while this endpoint only admitted 'unclaimed'
+   * identities — a first-time claimer holds no links at all. Admitting
+   * 'consumer' is what creates them, so the guards ship in the same change.
+   */
+  const existing = await ConsumerLink.findOne({ accountNumber, removedAt: null }).lean();
+  if (existing) {
+    // Distinguishing "yours" from "somebody else's" is deliberate. It is not an
+    // account-existence oracle — the NOT_FOUND below already answers that
+    // question for any account number — and the two need different actions from
+    // the consumer: one is "you already have this, go look", the other is "this
+    // is a dispute, call the office".
+    const mine = String(existing.userId) === String(dbUser._id);
+    throw httpError(
+      409,
+      mine ? MSG_ALREADY_YOURS : MSG_ALREADY_CLAIMED,
+      ErrorCodes.ALREADY_CLAIMED
+    );
+  }
+
+  const held = await ConsumerLink.countDocuments({ userId: dbUser._id, removedAt: null });
+  if (held >= MAX_LINKED_ACCOUNTS) {
+    throw httpError(409, MSG_ACCOUNT_LIMIT_REACHED, ErrorCodes.ACCOUNT_LIMIT_REACHED);
+  }
+
   const { maskedNumber, mobileValue } = await resolveAccountMobile(accountNumber);
 
   // Supersede prior live challenges for this pair: one code valid at a time
@@ -295,7 +345,17 @@ exports.verifyClaim = async (req, res) => {
     } catch (err) {
       if (err.code !== 11000) throw err;
       link = await ConsumerLink.findActive({ userId: dbUser._id, accountNumber });
-      if (!link) throw err;
+      if (!link) {
+        // The partial unique index rejected us and the winning row is not ours:
+        // somebody else claimed this account in the window between our code
+        // being issued and answered. Rare, but it used to surface as a 500 —
+        // after the consumer had typed a CORRECT code, which reads as "the app
+        // is broken" when the truth is "that account is spoken for".
+        //
+        // The code stays consumed. It was correct, it was used, and re-issuing
+        // it would not help: the account is unavailable, not the proof.
+        throw httpError(409, MSG_ALREADY_CLAIMED, ErrorCodes.ALREADY_CLAIMED);
+      }
     }
   }
 

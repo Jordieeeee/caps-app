@@ -65,20 +65,36 @@ const MONTHS = 3;
  * water use rather than about our data.
  */
 export function recentUsage(bills: Bill[], limit: number = MONTHS): RecentUsage | null {
-  const recent = [...bills]
-    .sort((a, b) => b.billingPeriod.localeCompare(a.billingPeriod))
-    .slice(0, limit);
-
-  const months: UsageMonth[] = [];
+  /**
+   * Group by period BEFORE taking the newest few, because a consumer can now
+   * hold several water accounts and each one bills the same month separately.
+   *
+   * This used to sort bills by period and slice the newest `limit` of them,
+   * which silently assumed one bill per month. With two accounts that returns
+   * August twice and July once — a chart labelled "Aug, Aug, Jul" claiming to
+   * be the past three months. Summing per period first restores the invariant
+   * the rest of this function depends on: one entry per month.
+   *
+   * Summing across accounts is the deliberate reading of "how much water did I
+   * use". A household with two meters used both. The consumer/index.tsx caller
+   * labels the card with how many accounts it covers, because that total is not
+   * a number anyone can check against a single meter.
+   */
+  const byPeriod = new Map<string, number>();
   let missing = 0;
 
-  for (const bill of recent) {
+  for (const bill of bills) {
     if (bill.consumptionCuM === null || !Number.isFinite(bill.consumptionCuM)) {
       missing += 1;
       continue;
     }
-    months.push({ billingPeriod: bill.billingPeriod, cubicMetres: bill.consumptionCuM });
+    byPeriod.set(bill.billingPeriod, (byPeriod.get(bill.billingPeriod) ?? 0) + bill.consumptionCuM);
   }
+
+  const months: UsageMonth[] = [...byPeriod.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .slice(0, limit)
+    .map(([billingPeriod, cubicMetres]) => ({ billingPeriod, cubicMetres }));
 
   if (months.length === 0) return null;
 
