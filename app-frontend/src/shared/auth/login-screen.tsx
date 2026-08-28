@@ -1,5 +1,4 @@
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -20,7 +19,6 @@ import { useGoogleSignIn } from '@/shared/auth/use-google-sign-in';
 import { PasswordRevealToggle } from '@/shared/components/password-reveal-toggle';
 import { ScreenMessage } from '@/shared/components/screen-message';
 import { TwdButton } from '@/shared/components/twd-button';
-import { TwdLink } from '@/shared/components/twd-link';
 import { TwdTextField } from '@/shared/components/twd-text-field';
 import { useConnectivity } from '@/shared/hooks/use-connectivity';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
@@ -44,7 +42,6 @@ import type { GoogleSession } from '@/shared/types/google-auth';
  */
 export function LoginScreen() {
   const { state, signIn, signInWithGoogle } = useAuth();
-  const router = useRouter();
   const theme = useTwdTheme();
   const { isOnline, recheck } = useConnectivity();
   const passwordRef = useRef<TextInput>(null);
@@ -249,18 +246,28 @@ export function LoginScreen() {
                   }
                 />
 
-                {/* Recovery sits with the field it recovers, above the submit button
-                    rather than in the footer: someone who cannot remember their
-                    password needs this before they commit to a failed attempt, not
-                    after. Trailing-aligned so it stays out of the scan path from
-                    field to primary action. */}
-                <TwdLink
-                  label="Forgot your password?"
-                  onPress={() => router.push('/forgot-password')}
-                  disabled={busy}
-                  accessibilityHint="Explains how to have your TWD password reset"
-                  style={styles.forgot}
-                />
+                {/* "Forgot your password?" was here, and its removal is a product
+                    decision rather than a tidy-up — recorded here because the next
+                    person to read this screen will wonder where it went.
+
+                    There is no reset endpoint and, given how accounts are actually
+                    created, there is nothing to build one for: every credential in
+                    the district's database is either portal-issued (reset at the
+                    office, by design — this backend is read-only against
+                    `appcredentials`), a Google identity (recovers by signing in
+                    with Google, then Account → Password), or a seeded dev account.
+                    Self-registration, the one bucket that would need a real reset
+                    flow, is switched off — see the note further down this file —
+                    and has produced zero accounts.
+
+                    ⚠️ IF /enroll IS EVER RE-LINKED, THIS COMES BACK WITH IT. A
+                    self-registered consumer has no Google account and no office
+                    record, so they would have no recovery path at all — not even a
+                    counter to walk into. Re-enabling self-registration and building
+                    password recovery are one decision, not two.
+
+                    The route file at app/(auth)/forgot-password.tsx is left in
+                    place, unlinked, exactly as /enroll is. */}
 
                 <TwdButton
                   label="Sign in"
@@ -397,7 +404,6 @@ const styles = StyleSheet.create({
   },
   centered: { textAlign: 'center' },
   form: { gap: Spacing.three },
-  forgot: { alignSelf: 'flex-end', marginTop: -Spacing.two },
   submit: { marginTop: Spacing.two },
   googleSection: { gap: Spacing.three },
   notice: {

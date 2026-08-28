@@ -7,6 +7,18 @@ export interface AccessTokenClaims {
   /** Seconds since epoch. */
   exp: number;
   iat: number;
+  /**
+   * HOW this session was proven — Google-flow tokens only.
+   *
+   * `'google'` means Google itself vouched for the holder when the session was
+   * opened; `'password'` means it was opened with the app-set password. The
+   * distinction decides whether the current password must be typed to replace it
+   * (app-backend/controllers/credentialController.js), and the Password screen
+   * reads it so the form asks for what is actually required.
+   *
+   * Absent on password-system tokens, which never reach that screen.
+   */
+  via?: 'google' | 'password';
 }
 
 function base64UrlDecode(segment: string): string {

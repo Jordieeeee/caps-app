@@ -10,6 +10,7 @@ import {
 } from '@/collector/services/collector-profile';
 import { timeOfDay } from '@/collector/services/today';
 import { useCollectorIdentity } from '@/collector/collector-identity';
+import { SignOutBlock } from '@/collector/components/sign-out-block';
 import { Icon } from '@/shared/components/icon';
 import { ListError } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
@@ -218,6 +219,21 @@ export default function CollectorAccountScreen() {
           </ScreenSection>
 
           <OfficeNote />
+
+          {/* Sign out, last on the screen and moved here from the More hub.
+
+              It belongs with the record it ends a session for: this is the screen
+              that answers "who am I to TWD", and signing out is the end of that
+              answer on this phone. On the hub it sat at the bottom of a list of
+              destinations, which is the wrong company for the one irreversible
+              action in the collector app — a list is something you scan past.
+
+              It carries its own unsent-work warning and reads the outbox itself,
+              so nothing here has to remember to pass it a count. See
+              collector/components/sign-out-block.tsx. */}
+          <ScreenSection gap={Spacing.three}>
+            <SignOutBlock />
+          </ScreenSection>
         </>
       )}
     </ScreenContainer>

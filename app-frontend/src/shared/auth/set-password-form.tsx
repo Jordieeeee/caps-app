@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { useAuth } from '@/shared/auth/auth-context';
 import { passwordProblem } from '@/shared/auth/password-policy';
 import { setPassword } from '@/shared/auth/credential';
+import { decodeAccessToken } from '@/shared/services/jwt';
 import { Icon } from '@/shared/components/icon';
 import { PasswordChecklist } from '@/shared/components/password-checklist';
 import { PasswordRevealToggle } from '@/shared/components/password-reveal-toggle';
@@ -49,18 +51,49 @@ export function SetPasswordForm({
   onDone: () => void;
 }) {
   const theme = useTwdTheme();
+  const { state } = useAuth();
+
+  /**
+   * Whether THIS session was opened with the password it is about to replace.
+   *
+   * The server's rule is that a Google-verified session may replace a forgotten
+   * password without knowing it, while a session opened WITH the password may not
+   * — otherwise a handed-over unlocked phone could lock its owner out. The rule is
+   * right; the form was not asking the question, so it showed everyone the same
+   * "Current password" field and the same "leave blank" hint, and half of them got
+   * a field they could not leave blank under a line telling them they could.
+   *
+   * The token knows: `via` is stamped when the session is minted (see
+   * app-backend/controllers/googleAuthController.js and authController's
+   * `authenticateMobileCredential`). Reading it here is what lets the form ask for
+   * exactly what the server will require, and nothing more.
+   */
+  const openedWithPassword = useMemo(() => {
+    if (state.status !== 'googleSignedIn') return false;
+    return decodeAccessToken(state.session.sessionToken)?.via === 'password';
+  }, [state]);
+
+  /**
+   * Ask for the current password only when it will actually be checked: a
+   * password already exists AND this session was opened with it. On a
+   * Google-verified session the field is absent rather than optional — an
+   * optional field on a security form is a question the reader has to answer
+   * ("does this apply to me?") and the app already knows the answer.
+   */
+  const needsCurrent = hasPassword && openedWithPassword;
 
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
   const [reveal, setReveal] = useState(false);
-  const [errors, setErrors] = useState<{ next?: string; confirm?: string }>({});
+  const [errors, setErrors] = useState<{ current?: string; next?: string; confirm?: string }>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
 
   const save = async () => {
     const found: typeof errors = {};
+    if (needsCurrent && !current) found.current = 'Enter your current password.';
     const problem = passwordProblem(next);
     if (problem) found.next = problem;
     if (confirm !== next) found.confirm = 'The two passwords do not match.';
@@ -76,7 +109,7 @@ export function SetPasswordForm({
         // password exists AND this session was opened with it — a Google-verified
         // session is allowed to replace a forgotten password, which is the whole
         // recovery story for this credential.
-        ...(hasPassword && current ? { currentPassword: current } : {}),
+        ...(needsCurrent ? { currentPassword: current } : {}),
       });
       setDone(true);
     } catch (error) {
@@ -147,17 +180,18 @@ export function SetPasswordForm({
         </View>
       </View>
 
-      {/* Only when there is a password to prove, and even then the server may not
-          ask for it — a session Google has just verified can replace a forgotten
-          one. Shown regardless in that case: someone changing a password they
-          remember expects to be asked for it, and a field that appears only
-          sometimes reads as a bug. */}
-      {hasPassword && (
+      {needsCurrent && (
         <TwdTextField
           label="Current password"
           value={current}
           onChangeText={setCurrent}
-          hint="Leave blank if you have forgotten it and signed in with Google."
+          error={errors.current}
+          // Names the way out rather than saying "required". Someone who has
+          // genuinely forgotten this password is not stuck — they can sign in
+          // with Google and come straight back here, where the field will be
+          // gone. That sentence is the whole recovery path, so it belongs on the
+          // field that is blocking them.
+          hint="Forgotten it? Sign out, use Continue with Google, and you can change it here without this."
           secureTextEntry={!reveal}
           autoCapitalize="none"
           autoComplete="current-password"
