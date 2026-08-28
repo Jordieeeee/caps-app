@@ -121,7 +121,7 @@ export default function ConsumerAccountScreen() {
           most likely to want out of the app (nothing loading, network unhappy) was
           exactly the state that hid the button. Settings depend on the session,
           not on any fetch, so they are not gated on one. */}
-      <SettingsSection profile={data?.profile ?? null} />
+      <SettingsSection />
     </ScreenContainer>
   );
 }
@@ -465,6 +465,42 @@ function DetailsSection({
         accessibilityHint="Change your mobile number or mailing address"
       />
 
+      {/* Signing in — directly under the details it belongs to, rather than down
+          in Settings beside Appearance and Sign out.
+
+          The password is a fact about this person's account, not a preference
+          about this phone: it sits with their name and email, one button below the
+          other thing they can change about themselves. Under Appearance it read as
+          a device setting, and it was separated from the email address it half
+          consists of by the entire account list.
+
+          `canSetPassword` is true only for a Google identity, which has no
+          password anywhere in TWD's systems. A consumer who already signs in with
+          an email and password has a credential the Admin Portal owns, and a row
+          here would offer to change something this app cannot change. It is also
+          false whenever the profile failed to load — the right way round: better a
+          row that appears on the next refresh than one that appears on a guess and
+          is then refused by the server. */}
+      {profile.canSetPassword && (
+        <>
+          <ThemedText type="defaultBold" style={styles.signInTitle}>
+            Signing in
+          </ThemedText>
+          <TwdButton
+            label={profile.hasPassword ? 'Change your password' : 'Set a password'}
+            icon="user"
+            variant="secondary"
+            onPress={() => router.push('/consumer/account/set-password')}
+            accessibilityHint="Lets you sign in with your email address instead of Google"
+          />
+          <ThemedText type="small" themeColor="textSecondary">
+            {profile.hasPassword
+              ? 'You can sign in with Continue with Google or with your email address and password. Both open this same account.'
+              : 'You sign in with Google. Add a password and you can also sign in with your email address — useful if you ever lose access to your Google account.'}
+          </ThemedText>
+        </>
+      )}
+
       <View
         style={[styles.limitNote, { borderColor: theme.border }]}
         accessible
@@ -630,9 +666,8 @@ function AccountCard({ account }: { account: Account }) {
   );
 }
 
-function SettingsSection({ profile }: { profile: ConsumerProfile | null }) {
+function SettingsSection() {
   const { signOut } = useAuth();
-  const router = useRouter();
 
   /**
    * Sign out confirms, but stays light about it.
@@ -668,36 +703,6 @@ function SettingsSection({ profile }: { profile: ConsumerProfile | null }) {
         </ThemedText>
       </ScreenSection>
 
-      {/* Sign-in, and only for the identity that has a choice to make about it.
-
-          `canSetPassword` is false for a consumer who already signs in with an
-          email and password — their credential is the Admin Portal's, and a row
-          here would offer to change something this app cannot change. It is also
-          false whenever the profile failed to load, which is the right way round:
-          a row that appears on a guess and then refuses at the server is worse
-          than a row that waits for the next refresh.
-
-          See app-frontend/src/app/consumer/account/set-password.tsx for why a
-          Google consumer needs this at all — the short version is that the
-          sign-in screen offers them a password box that can never work. */}
-      {profile?.canSetPassword && (
-        <ScreenSection gap={Spacing.two}>
-          <ThemedText type="defaultBold">Signing in</ThemedText>
-          <TwdButton
-            label={profile.hasPassword ? 'Change your password' : 'Set a password'}
-            icon="user"
-            variant="secondary"
-            onPress={() => router.push('/consumer/account/set-password')}
-            accessibilityHint="Lets you sign in with your email address instead of Google"
-          />
-          <ThemedText type="small" themeColor="textSecondary">
-            {profile.hasPassword
-              ? 'You can sign in with Continue with Google or with your email address and password. Both open this same account.'
-              : 'You sign in with Google. Add a password and you can also sign in with your email address — useful if you ever lose access to your Google account.'}
-          </ThemedText>
-        </ScreenSection>
-      )}
-
       <ScreenSection gap={Spacing.three}>
         {/* Send feedback and Your feedback were here. They are on Notices now: that
             tab is what the district says to the consumer, and feedback is the same
@@ -727,6 +732,10 @@ function SettingsSection({ profile }: { profile: ConsumerProfile | null }) {
    the foot of AccountsSection. */
 
 const styles = StyleSheet.create({
+  // The section's own gap already separates the rows; this adds the extra beat a
+  // new heading needs so "Signing in" reads as a fresh group rather than as a
+  // caption on the button above it.
+  signInTitle: { marginTop: Spacing.two },
   countRow: {
     flexDirection: 'row',
     alignItems: 'center',
