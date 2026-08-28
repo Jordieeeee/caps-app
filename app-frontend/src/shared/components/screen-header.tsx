@@ -17,6 +17,16 @@ interface ScreenHeaderProps {
    * screen's actual content further down on every one of these screens.
    */
   action?: ReactNode;
+  /**
+   * A count that belongs to the title — a CountBadge, in practice.
+   *
+   * Rendered hard against the title text rather than at the trailing edge, which
+   * is where `action` lives. The difference is what the two mean: an action is a
+   * control that happens to sit on this row, while a badge is part of the heading,
+   * and a number floating at the far side of the screen reads as belonging to the
+   * button beside it instead of to the word it counts.
+   */
+  badge?: ReactNode;
 }
 
 /**
@@ -38,13 +48,18 @@ interface ScreenHeaderProps {
  * navigation header instead — giving them this header as well would print the
  * screen's name twice.
  */
-export function ScreenHeader({ title, subtitle, action }: ScreenHeaderProps) {
+export function ScreenHeader({ title, subtitle, action, badge }: ScreenHeaderProps) {
   return (
     <View style={styles.header}>
       <View style={styles.titleRow}>
-        <ThemedText style={styles.title} accessibilityRole="header">
-          {title}
-        </ThemedText>
+        {/* The title and its badge share a group that takes the row's slack, so
+            the badge sits beside the word and the action still pins right. */}
+        <View style={styles.titleGroup}>
+          <ThemedText style={styles.title} accessibilityRole="header">
+            {title}
+          </ThemedText>
+          {badge}
+        </View>
         {action}
       </View>
       {subtitle ? (
@@ -67,11 +82,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.three,
   },
+  // Takes the slack so the action pins to the trailing edge. The title inside it
+  // is free to be exactly as wide as its text, which is what lets the badge sit
+  // against the last letter instead of across the screen from it.
+  titleGroup: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
   // fontSize and lineHeight declared together — the pair never inherits apart.
   title: {
-    // Takes the slack so the action pins to the trailing edge, and so a long title
-    // wraps inside its own column instead of pushing the button off-screen.
-    flex: 1,
+    // Shrinks rather than grows: a long title wraps inside this row instead of
+    // pushing the badge and the button off-screen.
+    flexShrink: 1,
     fontSize: 26,
     lineHeight: 32,
     fontWeight: '700',

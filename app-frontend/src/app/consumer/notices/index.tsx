@@ -1,6 +1,6 @@
-import { useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -12,9 +12,12 @@ import {
   type Notification,
   type NotificationKind,
 } from '@/consumer/services/consumer-data';
+import { NoticeUnread, useUnreadNoticeCount } from '@/consumer/services/notice-unread';
+import { useIdentity } from '@/shared/auth/auth-context';
 import { formatPeso } from '@/shared/format/currency';
 import { formatDate } from '@/shared/format/date';
 import { Icon, type IconName } from '@/shared/components/icon';
+import { CountBadge } from '@/shared/components/count-badge';
 import { ListEmpty, ListError } from '@/shared/components/list-states';
 import { SkeletonList } from '@/shared/components/skeleton';
 import { RefreshButton, RefreshFailedNotice } from '@/shared/components/refresh-button';
@@ -37,6 +40,8 @@ const ORDER: Record<Notice['priority'], number> = { high: 0, medium: 1, low: 2 }
  */
 export default function ConsumerNoticesScreen() {
   const router = useRouter();
+  const { email } = useIdentity();
+  const unread = useUnreadNoticeCount();
   const { state, reload, refresh, refreshing, refreshFailed } = useAsync(
     useCallback(() => listNotices(), [])
   );
@@ -51,16 +56,102 @@ export default function ConsumerNoticesScreen() {
    */
   const inbox = useAsync(useCallback(() => listNotifications(), []));
 
+  /**
+   * ⚠️ Depends on `inbox.refresh`, NOT on `inbox`.
+   *
+   * `useAsync` returns a fresh object literal every render, so depending on the
+   * whole thing gives `refreshAll` a new identity on every render — and this
+   * callback is now the dependency of a `useFocusEffect` whose cleanup marks the
+   * feed as seen. That would re-register the effect on every render and run the
+   * cleanup with it, marking the notices seen dozens of times a second and
+   * clearing the badge the instant it appeared. The two `refresh` functions are
+   * stable (each is a `useCallback` over a stable loader), so naming them directly
+   * makes this callback stable too.
+   */
+  const inboxRefresh = inbox.refresh;
   const refreshAll = useCallback(() => {
     void refresh();
-    void inbox.refresh();
-  }, [refresh, inbox]);
+    void inboxRefresh();
+  }, [refresh, inboxRefresh]);
+
+  /**
+   * The list as it currently stands, for the mark-seen call below.
+   *
+   * A ref rather than a dependency, so the focus effect underneath registers once
+   * per visit instead of re-registering — and re-running its cleanup — every time
+   * the feed refreshes. That distinction is the whole behaviour of the badge: see
+   * the comment on the effect.
+   */
+  const rendered = useRef<Notice[]>([]);
+  useEffect(() => {
+    if (state.status === 'ready') rendered.current = state.data;
+  }, [state]);
+
+  /**
+   * Refresh on the way in; mark the feed seen on the way out.
+   *
+   * ⚠️ THIS SCREEN IS MOUNTED LONG BEFORE ANYONE LOOKS AT IT. NativeTabs renders
+   * every tab's content when the shell mounts — there is no lazy gate (see
+   * NativeBottomTabsNavigator: `contentRenderer: () => descriptors[key].render()`
+   * runs for all four tabs) — so the load above happens at sign-in, and by the time
+   * someone taps Notices its answer can be hours old. It is also why this needs no
+   * "skip the first run" guard: the tab does not mount focused, so the first time
+   * this fires is a genuine visit.
+   *
+   * Marking on the way OUT rather than on arrival is what makes the count on the
+   * heading worth having. Marked on arrival — which is what this did — the badge
+   * was cleared by the same render that drew it, so the number flashed up and
+   * vanished before anyone could read it. Held until the consumer leaves, it
+   * answers the question they came with: how many of these are new since last time.
+   * A notice arriving mid-visit still increments it, live, which is the one moment
+   * the whole feature is visible working.
+   *
+   * The backgrounding case is marked too. Otherwise a consumer who reads their
+   * notices and then swipes the app away is shown the same badge on next launch,
+   * for notices they have already read.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      refreshAll();
+
+      const markSeen = () => {
+        if (email) void NoticeUnread.markSeen(email, rendered.current);
+      };
+      const background = AppState.addEventListener('change', (status) => {
+        if (status !== 'active') markSeen();
+      });
+
+      return () => {
+        background.remove();
+        markSeen();
+      };
+    }, [refreshAll, email])
+  );
+
+  /**
+   * Re-read the moment TWD publishes something, without waiting to be asked.
+   *
+   * This is the live half of the feature: the backend holds a connection open and
+   * says "the feed changed" as the portal publishes (see notice-unread.ts, and
+   * app-backend/services/noticeStream.js for the change stream behind it). The
+   * event carries no notice — the list is re-fetched, so what renders has been
+   * through the same audience gate as everything else on this screen.
+   *
+   * `refresh`, never `reload`: a consumer reading an interruption notice must not
+   * have it replaced by a skeleton because a second, unrelated notice arrived.
+   */
+  useEffect(() => NoticeUnread.onFeedChanged(refreshAll), [refreshAll]);
+
 
   return (
     <ScreenContainer onRefresh={refreshAll} refreshing={refreshing || inbox.refreshing}>
       <ScreenHeader
         title="Notices"
         subtitle="Service updates from Tanauan City Water District"
+        /* Beside the title, and it disappears as you read: the mark-seen effect
+           above fires as soon as the list is on screen, so the number is here to
+           tell someone arriving from another tab what they arrived for. */
+        badge={<CountBadge count={unread} label="new notices" />}
         action={<RefreshButton onPress={refreshAll} busy={refreshing} subject="notices" />}
       />
 
@@ -374,8 +465,12 @@ function NoticeCard({ notice }: { notice: Notice }) {
 
       <View style={[styles.footer, { borderTopColor: theme.border }]}>
         <Icon name="calendar" size={14} color={theme.textSecondary} />
+        {/* Through formatDate like every other date in the app. This printed
+            `notice.date` raw, so a card read "Posted 2026-08-08T08:14:34.681Z" —
+            the machine timestamp the module note at the top of shared/format/date.ts
+            exists to keep off a consumer's screen. */}
         <ThemedText type="small" themeColor="textSecondary">
-          Posted {notice.date}
+          Posted {formatDate(notice.date)}
         </ThemedText>
       </View>
     </ThemedView>

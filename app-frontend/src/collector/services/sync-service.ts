@@ -1,6 +1,7 @@
 import NetInfo from '@react-native-community/netinfo';
 
 import { apiFetch } from '@/shared/services/api-client';
+import { AuthError, ClientErrorCode } from '@/shared/types/auth';
 import { OfflineStorage } from './offline-storage';
 
 export interface SyncStatus {
@@ -13,9 +14,58 @@ export interface SyncStatus {
   };
 }
 
+/**
+ * Why a record did not reach TWD, in the only two shapes that lead anywhere
+ * different for the collector holding the phone.
+ *
+ * `unreachable` — the request never got an answer: no signal, or the API is not
+ * where the app is configured to look. Waiting is the right response, and the
+ * automatic sync will handle it.
+ *
+ * `rejected` — TWD answered, and said no. Waiting is exactly the wrong response:
+ * a 400 on a malformed record or a 403 on an employee record the office has not
+ * set up will fail identically forever, and every retry looks like bad signal.
+ * The collector needs to be told to call the office, not to walk uphill.
+ */
+export type SyncFailureKind = 'unreachable' | 'rejected';
+
+export interface SyncFailure {
+  kind: SyncFailureKind;
+  /** The server's own sentence where there is one; never invented here. */
+  message: string;
+}
+
 export interface SyncResult {
   success: number;
   failed: number;
+  /**
+   * The first failure, kept verbatim.
+   *
+   * Every catch in this class used to be `catch { failed++ }` — the reason was
+   * caught and dropped on the floor, so the UI could only say "failed" and
+   * guess at why. It guessed "try again when signal is stronger", which is a
+   * sentence that has sent a collector to stand by a window over a stale API
+   * address and over a validation error, neither of which signal can fix.
+   *
+   * First rather than a list: a whole outbox fails for one reason in practice
+   * (the connection, or the token, or the endpoint), and a screen that prints
+   * three copies of the same sentence reads as three separate problems.
+   */
+  failure?: SyncFailure;
+}
+
+/** Classify a thrown error without inventing detail it does not carry. */
+function toFailure(error: unknown): SyncFailure {
+  if (error instanceof AuthError) {
+    return {
+      kind: error.code === ClientErrorCode.NETWORK_UNAVAILABLE ? 'unreachable' : 'rejected',
+      message: error.message,
+    };
+  }
+  return {
+    kind: 'unreachable',
+    message: error instanceof Error ? error.message : 'Unknown error.',
+  };
 }
 
 /**
@@ -127,6 +177,7 @@ export class SyncService {
     this.isSyncing = true;
     let success = 0;
     let failed = 0;
+    let failure: SyncFailure | undefined;
 
     try {
       for (const result of [
@@ -135,6 +186,7 @@ export class SyncService {
       ]) {
         success += result.success;
         failed += result.failed;
+        failure ??= result.failure;
       }
 
       // Only when the outbox genuinely drained. This used to run unconditionally,
@@ -145,7 +197,7 @@ export class SyncService {
         await OfflineStorage.clearSyncQueue();
       }
 
-      return { success, failed };
+      return { success, failed, failure };
     } finally {
       this.isSyncing = false;
     }
@@ -223,6 +275,7 @@ export class SyncService {
     const unsynced = await OfflineStorage.getUnsyncedMeterReadings();
     let success = 0;
     let failed = 0;
+    let failure: SyncFailure | undefined;
 
     for (const reading of unsynced) {
       try {
@@ -254,18 +307,20 @@ export class SyncService {
         // await, the record is lost the moment the collector signs out.
         await OfflineStorage.markMeterReadingSynced(reading.id);
         success++;
-      } catch {
+      } catch (error) {
         failed++;
+        failure ??= toFailure(error);
       }
     }
 
-    return { success, failed };
+    return { success, failed, failure };
   }
 
   private static async syncServiceOrders(): Promise<SyncResult> {
     const unsynced = await OfflineStorage.getUnsyncedServiceOrders();
     let success = 0;
     let failed = 0;
+    let failure: SyncFailure | undefined;
 
     for (const order of unsynced) {
       try {
@@ -284,12 +339,13 @@ export class SyncService {
         });
         await OfflineStorage.markServiceOrderSynced(order.id);
         success++;
-      } catch {
+      } catch (error) {
         failed++;
+        failure ??= toFailure(error);
       }
     }
 
-    return { success, failed };
+    return { success, failed, failure };
   }
 
   static async getSyncStatus(): Promise<SyncStatus> {

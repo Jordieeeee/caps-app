@@ -1,6 +1,17 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
 
+import { useUnreadNoticeCount } from '@/consumer/services/notice-unread';
 import AppTabs from '@/shared/components/app-tabs';
+
+/**
+ * Above this, the badge stops being a count and becomes "a lot".
+ *
+ * A two-digit number in a tab-bar badge is unreadable at arm's length and the
+ * exact figure has no use anyway — nobody behaves differently for 11 notices than
+ * for 30. Standard platform convention, and it keeps the badge from growing wide
+ * enough to collide with the tab beside it.
+ */
+const BADGE_CAP = 9;
 
 /**
  * Consumer tab bar. Four tabs, each answering one consumer question.
@@ -37,6 +48,8 @@ import AppTabs from '@/shared/components/app-tabs';
  * the OS. The old bar used PNGs from the Expo starter template.
  */
 export default function ConsumerTabs() {
+  const unreadNotices = useUnreadNoticeCount();
+
   return (
     <AppTabs>
       <NativeTabs.Trigger name="index">
@@ -71,6 +84,23 @@ export default function ConsumerTabs() {
       <NativeTabs.Trigger name="notices">
         <NativeTabs.Trigger.Label>Notices</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'bell', selected: 'bell.fill' }} md="notifications" />
+        {/* The red count, and the only badge in either tab bar.
+
+            It is here rather than on the Notices screen itself because a number
+            that can only be seen by opening the screen it describes has nothing
+            left to tell you once you can see it. The whole job is to be visible
+            from Home on the morning the office posts an interruption.
+
+            Rendered only when there is something to say. A badge showing 0 is a
+            red dot claiming attention for nothing, and a tab bar that always has
+            one is a tab bar nobody looks at. See notice-unread.ts for what
+            "unread" means and for what this deliberately is NOT — nothing here
+            reaches a phone whose owner has not opened the app. */}
+        {unreadNotices > 0 && (
+          <NativeTabs.Trigger.Badge>
+            {unreadNotices > BADGE_CAP ? `${BADGE_CAP}+` : String(unreadNotices)}
+          </NativeTabs.Trigger.Badge>
+        )}
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="account">

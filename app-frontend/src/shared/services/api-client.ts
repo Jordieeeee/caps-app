@@ -32,6 +32,29 @@ if (!API_BASE_URL) {
 /** Refresh this far ahead of expiry so a request doesn't die mid-flight. */
 const REFRESH_SKEW_MS = 30_000;
 
+/**
+ * How long any one request may hang before it counts as unreachable.
+ *
+ * There was no cap, so a request had whatever the platform gives it — around a
+ * minute on iOS, longer on some Android networks. That is not a timeout anyone
+ * chose; it is the default for a desktop browser fetching a document, applied to
+ * a handset whose entire design premise is that the signal comes and goes.
+ *
+ * The cost showed up as screens that appeared frozen. A collector opening Account
+ * out of coverage sat in front of a skeleton for the better part of a minute
+ * before the code fell back to the copy already on the phone — and the worst case
+ * is not no-signal at all but a captive barangay wifi that accepts the connection
+ * and never answers, where nothing ever errors and the wait is the full timeout
+ * every time.
+ *
+ * Fifteen seconds is well past a slow-but-working request on 3G (the API's
+ * heaviest response is a route of a few hundred accounts) and well short of the
+ * point where someone decides the app is broken. Failing here is cheap: every
+ * collector read falls back to cache, and every collector write is already in the
+ * outbox and will be retried.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 interface ApiErrorBody {
   error?: string;
   code?: string;
@@ -61,15 +84,34 @@ async function parseError(response: Response): Promise<AuthError> {
   return new AuthError(code, body.error ?? 'Something went wrong.', response.status);
 }
 
-/** A fetch that reports unreachable-network as a typed error instead of a raw TypeError. */
+/**
+ * A fetch that reports unreachable-network as a typed error instead of a raw
+ * TypeError, and that gives up after REQUEST_TIMEOUT_MS.
+ *
+ * The abort lands in the same catch as a connection failure and produces the same
+ * typed error, which is the honest reading: from the app's side, a server that
+ * never answers and a server that cannot be reached are one situation, and every
+ * caller already handles it — falls back to cache, or leaves the record in the
+ * outbox.
+ */
 async function rawFetch(path: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const expiry = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(`${API_BASE_URL}${path}`, init);
+    // A caller's own signal wins: it means something more specific than "too
+    // slow" (a screen unmounting, a request superseded), and nothing here should
+    // override that. No caller passes one today; this keeps the door open.
+    return await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      signal: init.signal ?? controller.signal,
+    });
   } catch {
     throw new AuthError(
       ClientErrorCode.NETWORK_UNAVAILABLE,
       'Cannot reach the TWD server. Check your connection and try again.'
     );
+  } finally {
+    clearTimeout(expiry);
   }
 }
 
@@ -250,6 +292,37 @@ async function googleBearerFetch<T>(path: string, init: RequestInit): Promise<T>
   }
 
   return finish<T>(response);
+}
+
+/**
+ * The `Authorization` header value for the current session, refreshing first if
+ * the access token is about to expire.
+ *
+ * Exists for the one caller `apiFetch` cannot serve: a Server-Sent Events
+ * connection (consumer/services/notice-unread.ts). SSE is an XHR that never
+ * finishes, so it needs the header at connect time and cannot be handed a
+ * response to retry — and the alternative, re-deriving "which token does this
+ * session use, and is it stale" at the call site, is how one of the two identity
+ * systems quietly stops working.
+ *
+ * Throws exactly what apiFetch would: no session at all is an AuthError, not an
+ * empty string that produces a puzzling 401 later.
+ */
+export async function authorizationHeader(): Promise<string> {
+  let session = await secureTokenStore.load();
+
+  if (!session) {
+    const google = await googleSessionStore.load();
+    if (!google) {
+      throw new AuthError(AuthErrorCode.TOKEN_EXPIRED, 'You are not signed in.', 401);
+    }
+    return `Bearer ${google.sessionToken}`;
+  }
+
+  if (isAccessTokenExpired(session.accessToken, REFRESH_SKEW_MS)) {
+    session = await refreshSession();
+  }
+  return `Bearer ${session.accessToken}`;
 }
 
 /**

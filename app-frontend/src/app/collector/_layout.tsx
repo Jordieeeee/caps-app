@@ -1,6 +1,7 @@
 import { Redirect } from 'expo-router';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CollectorIdentityProvider } from '@/collector/collector-identity';
 import CollectorTabs from '@/collector/navigation/collector-tabs';
@@ -8,6 +9,7 @@ import { SyncService } from '@/collector/services/sync-service';
 import { useAuth } from '@/shared/auth/auth-context';
 import { SessionStatusBanner } from '@/shared/components/session-status-banner';
 import { useConnectivity } from '@/shared/hooks/use-connectivity';
+import type { SessionSync } from '@/shared/types/auth';
 
 /**
  * Collector shell.
@@ -24,6 +26,7 @@ import { useConnectivity } from '@/shared/hooks/use-connectivity';
 export default function CollectorLayout() {
   const { state } = useAuth();
   const { isOnline } = useConnectivity();
+  const insets = useSafeAreaInsets();
 
   /**
    * Two ways to be a collector, and they are NOT interchangeable below.
@@ -105,6 +108,46 @@ export default function CollectorLayout() {
     void SyncService.hydrateHistory();
   }, [isCollector]);
 
+  /**
+   * One banner, one state. This rendered two <SessionStatusBanner> elements — one
+   * per identity — each returning null for the other's session. That was harmless
+   * while nothing else needed to know whether a banner was on screen; the layout
+   * below now does, and "is anything showing?" cannot be asked of two components
+   * that decide it privately. So the decision is made once, here.
+   */
+  const sync: SessionSync | null =
+    state.status === 'signedIn'
+      ? state.sync
+      : googleCollector
+        ? isOnline === false
+          ? 'offline'
+          : 'online'
+        : null;
+  const bannerVisible = sync !== null && sync !== 'online';
+
+  /**
+   * The banner now reserves the top safe area itself (see session-status-banner),
+   * so the screens underneath must stop reserving it a second time.
+   *
+   * Without this the offline shell showed the status-bar height twice: once as the
+   * amber strip behind the Dynamic Island, and again as dead space between the
+   * banner and the first line of content — because useContentInsets pads every tab
+   * screen by `safeArea.top`, correctly, on the assumption that nothing above it
+   * has already done so.
+   *
+   * Overriding the context rather than threading a prop through every screen is
+   * what keeps that assumption true instead of making thirteen screens special-case
+   * it. Only `top` is zeroed, and only while the banner is up: left, right and
+   * bottom still describe real hardware, and the tab bar at the bottom is as far
+   * from this as ever. Native chrome (the More stack's header, the NativeTabs bar)
+   * reads its insets from UIKit/Android rather than from this context and needs no
+   * help — a native view laid out below the cutout is told its own safe area.
+   */
+  const shellInsets = useMemo(
+    () => (bannerVisible ? { ...insets, top: 0 } : insets),
+    [bannerVisible, insets]
+  );
+
   if (!isCollector) {
     return <Redirect href="/" />;
   }
@@ -120,21 +163,22 @@ export default function CollectorLayout() {
           The two sessions report different things, and the difference is not
           cosmetic. The password session tracks token staleness, so it can be
           'unsynced'. A Google session has no refresh and therefore no staleness
-          to report: it is online or it is offline, and `sync` is derived here
+          to report: it is online or it is offline, and `sync` is derived above
           from connectivity alone rather than defaulted to something cheerful.
           See types/auth.ts — googleSignedIn carries no `sync` field, and this
           is deliberately not the place to invent one. */}
-      {state.status === 'signedIn' && <SessionStatusBanner sync={state.sync} />}
-      {googleCollector && <SessionStatusBanner sync={isOnline === false ? 'offline' : 'online'} />}
+      {bannerVisible && sync && <SessionStatusBanner sync={sync} />}
       {/* Identity resolves ONCE for the whole shell rather than per screen.
           Six collector screens need the same employment record, and for a
           Google collector it arrives over the network — six independent loads
           would be six spinners and six chances to disagree. */}
-      <CollectorIdentityProvider>
-        <View style={styles.content}>
-          <CollectorTabs />
-        </View>
-      </CollectorIdentityProvider>
+      <SafeAreaInsetsContext.Provider value={shellInsets}>
+        <CollectorIdentityProvider>
+          <View style={styles.content}>
+            <CollectorTabs />
+          </View>
+        </CollectorIdentityProvider>
+      </SafeAreaInsetsContext.Provider>
     </View>
   );
 }

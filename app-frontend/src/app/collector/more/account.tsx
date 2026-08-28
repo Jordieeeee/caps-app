@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -47,7 +47,10 @@ export default function CollectorAccountScreen() {
   const { collector, identityKey } = useCollectorIdentity();
   const router = useRouter();
   const { state, reload, refresh, refreshing } = useAsync(
-    useCallback(() => CollectorProfileService.load(identityKey), [identityKey])
+    useCallback(
+      (options) => CollectorProfileService.load(identityKey, options),
+      [identityKey]
+    )
   );
 
   /**
@@ -55,9 +58,20 @@ export default function CollectorAccountScreen() {
    * the way back. `refresh`, not `reload`: reload blanks the whole record to a
    * skeleton, and returning from a one-field edit should not look like a reload of
    * everything.
+   *
+   * The first focus is skipped, and that is not an optimisation detail. A focus
+   * effect fires on mount too, so this ran alongside useAsync's own initial load —
+   * two loads of the same record, racing, every single time the screen opened. The
+   * save path does not need it either: `update` writes the server's answer straight
+   * to the cache, so the value is already there for the load below to read.
    */
+  const mounted = useRef(false);
   useFocusEffect(
     useCallback(() => {
+      if (!mounted.current) {
+        mounted.current = true;
+        return;
+      }
       void refresh();
     }, [refresh])
   );
@@ -65,7 +79,13 @@ export default function CollectorAccountScreen() {
   const snapshot = state.status === 'ready' ? state.data : null;
 
   return (
-    <ScreenContainer variant="stack" onRefresh={refresh} refreshing={refreshing}>
+    <ScreenContainer
+      variant="stack"
+      // Forced: a pull-to-refresh is a person asking TWD, so it goes to the
+      // network even when the cached copy is minutes old. Every other caller
+      // takes the cache-first path — see CollectorProfileService.load.
+      onRefresh={() => void refresh({ force: true })}
+      refreshing={refreshing}>
       {state.status === 'loading' && (
         <ScreenSection gap={Spacing.three}>
           <SkeletonBlock height={96} />
@@ -157,7 +177,11 @@ export default function CollectorAccountScreen() {
               />
             </ThemedView>
 
-            <FreshnessNote fromCache={snapshot.fromCache} fetchedAt={snapshot.fetchedAt} />
+            <FreshnessNote
+              fromCache={snapshot.fromCache}
+              pullFailed={snapshot.pullFailed}
+              fetchedAt={snapshot.fetchedAt}
+            />
           </ScreenSection>
 
           <OfficeNote />
@@ -238,22 +262,38 @@ function SectionTitle({ icon, title }: { icon: 'user' | 'map' | 'file-check'; ti
  * Past tense with a timestamp, never a bare "up to date" — same rule the sync
  * screen follows. The app knows when it last successfully asked TWD; it cannot
  * know that the office has not changed the record since.
+ *
+ * THREE states, not two, because the screen now answers most opens from the phone
+ * without asking TWD at all (see CollectorProfileService.load). "Could not reach
+ * TWD" on a load that never tried would be a warning about a failure that did not
+ * happen — and it would train a collector to ignore the line on the day it means
+ * something. So a skipped pull says plainly that this is the saved copy and how to
+ * check for a newer one; only a pull that was made and failed gets the warning
+ * colour.
  */
-function FreshnessNote({ fromCache, fetchedAt }: { fromCache: boolean; fetchedAt: number | null }) {
+function FreshnessNote({
+  fromCache,
+  pullFailed,
+  fetchedAt,
+}: {
+  fromCache: boolean;
+  pullFailed: boolean;
+  fetchedAt: number | null;
+}) {
   const theme = useTwdTheme();
   if (fetchedAt === null) return null;
 
+  const color = pullFailed ? theme.warning : theme.textSecondary;
+
   return (
     <View style={styles.freshness}>
-      <Icon
-        name={fromCache ? 'cloud-off' : 'refresh'}
-        size={14}
-        color={fromCache ? theme.warning : theme.textSecondary}
-      />
-      <ThemedText type="small" style={{ color: fromCache ? theme.warning : theme.textSecondary }}>
-        {fromCache
+      <Icon name={fromCache ? 'cloud-off' : 'refresh'} size={14} color={color} />
+      <ThemedText type="small" style={{ color }}>
+        {pullFailed
           ? `Could not reach TWD. Showing the copy saved ${timeOfDay(fetchedAt)}.`
-          : `Read from TWD ${timeOfDay(fetchedAt)}.`}
+          : fromCache
+            ? `Saved copy from ${timeOfDay(fetchedAt)}. Pull down to check for changes.`
+            : `Read from TWD ${timeOfDay(fetchedAt)}.`}
       </ThemedText>
     </View>
   );

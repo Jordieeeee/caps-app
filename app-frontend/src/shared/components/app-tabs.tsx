@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { Colors } from '@/constants/theme';
 import { useResolvedScheme } from '@/shared/theme/theme-preference';
+import { twdTheme } from '@/shared/theme/twd';
 
 /**
  * The shared tab bar chrome. Relocated here from src/components/app-tabs.tsx.
@@ -24,12 +25,29 @@ export default function AppTabs({ children }: { children: ReactNode }) {
   // Through the preference, not the OS: the bar is the one piece of chrome on
   // every screen, and a tab bar that stayed light while the screens above it went
   // dark would read as a rendering bug rather than as a setting.
-  const colors = Colors[useResolvedScheme()];
+  const scheme = useResolvedScheme();
+  const colors = Colors[scheme];
+  const twd = twdTheme(scheme);
 
   return (
     <NativeTabs
       backgroundColor={colors.background}
       indicatorColor={colors.backgroundElement}
+      /**
+       * Badge colours are stated rather than left to the platform.
+       *
+       * iOS paints a system red and Android its own error colour, so an
+       * unstyled badge is two different reds on two phones sitting next to each
+       * other — and neither is the red this app uses for everything else it
+       * marks as needing attention. `danger` is that red (see theme/twd.ts,
+       * where it is checked for contrast), and the white on top of it is the
+       * one pairing on the badge that has to stay legible at 10pt.
+       *
+       * `badgeTextColor` is Android and web only; iOS draws white on the badge
+       * background and offers no say in it, which is the same result.
+       */
+      badgeBackgroundColor={twd.danger}
+      badgeTextColor="#FFFFFF"
       labelStyle={{ selected: { color: colors.text } }}>
       {children}
     </NativeTabs>

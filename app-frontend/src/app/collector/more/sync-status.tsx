@@ -5,7 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { SyncService } from '@/collector/services/sync-service';
+import { SyncService, type SyncResult } from '@/collector/services/sync-service';
 import { Icon, type IconName } from '@/shared/components/icon';
 import { TwdButton } from '@/shared/components/twd-button';
 import { useStackContentInsets } from '@/shared/hooks/use-content-insets';
@@ -33,7 +33,7 @@ export default function SyncStatusScreen() {
     },
   });
   const [isSyncing, setIsSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ success: number; failed: number } | null>(null);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
 
   const loadSyncStatus = async () => {
     const status = await SyncService.getSyncStatus();
@@ -68,8 +68,23 @@ export default function SyncStatusScreen() {
       const result = await SyncService.forceSyncNow();
       setSyncResult(result);
       await loadSyncStatus();
-    } catch {
-      setSyncResult({ success: 0, failed: 1 });
+    } catch (error) {
+      /**
+       * The sync never started — a sync already running, or the connection
+       * dropped between the button being enabled and being tapped.
+       *
+       * `failed: 1` used to be reported here, which was a count of nothing: no
+       * record was attempted, and the outbox may hold twelve. The counts are
+       * left at zero and the reason is carried instead.
+       */
+      setSyncResult({
+        success: 0,
+        failed: 0,
+        failure: {
+          kind: 'unreachable',
+          message: error instanceof Error ? error.message : 'Sync could not be started.',
+        },
+      });
     } finally {
       setIsSyncing(false);
     }
@@ -198,36 +213,7 @@ export default function SyncStatusScreen() {
           </View>
         )}
 
-        {syncResult && (
-          <View
-            style={[
-              styles.resultCard,
-              syncResult.failed > 0
-                ? { borderColor: twd.danger, backgroundColor: twd.dangerSurface }
-                : { borderColor: twd.success, backgroundColor: theme.backgroundElement },
-            ]}
-            accessibilityRole="alert"
-            accessibilityLiveRegion="polite">
-            <Icon
-              name={syncResult.failed > 0 ? 'alert-triangle' : 'check'}
-              size={20}
-              color={syncResult.failed > 0 ? twd.danger : twd.success}
-            />
-            <View style={styles.resultDetails}>
-              <ThemedText
-                type="defaultBold"
-                style={{ color: syncResult.failed > 0 ? twd.danger : twd.success }}>
-                {syncResult.failed > 0 ? 'Sync incomplete' : 'Sync complete'}
-              </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {syncResult.success} sent
-                {syncResult.failed > 0
-                  ? `, ${syncResult.failed} failed — those records are still saved on this phone. Try again when signal is stronger.`
-                  : '.'}
-              </ThemedText>
-            </View>
-          </View>
-        )}
+        {syncResult && <SyncResultCard result={syncResult} />}
 
         <ThemedView type="backgroundElement" style={styles.infoBox}>
           <ThemedText type="defaultBold" style={styles.infoTitle}>
@@ -248,6 +234,70 @@ export default function SyncStatusScreen() {
         </ThemedView>
       </ThemedView>
     </ScrollView>
+  );
+}
+
+/**
+ * What just happened, and what the collector should do about it.
+ *
+ * The old version of this card said, for every failure: "those records are still
+ * saved on this phone. Try again when signal is stronger." The first half is
+ * always true and worth saying. The second half was a guess dressed as advice,
+ * and it was wrong in the case that actually turned up — the app pointing at a
+ * stale API address, where the phone had four bars, the sync failed identically
+ * every time, and the screen kept advising the collector to find better signal.
+ *
+ * A rejection and an unreachable server call for opposite responses, so they get
+ * different sentences, and the server's own words are printed underneath rather
+ * than paraphrased. If TWD said "Missing required fields: routeId", that is the
+ * sentence that gets someone to a fix; "try again later" is the sentence that
+ * gets a collector to try the same thing until the end of their shift.
+ */
+function SyncResultCard({ result }: { result: SyncResult }) {
+  const theme = useTheme();
+  const twd = useTwdTheme();
+
+  const failed = result.failed > 0 || !!result.failure;
+  const rejected = result.failure?.kind === 'rejected';
+
+  return (
+    <View
+      style={[
+        styles.resultCard,
+        failed
+          ? { borderColor: twd.danger, backgroundColor: twd.dangerSurface }
+          : { borderColor: twd.success, backgroundColor: theme.backgroundElement },
+      ]}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite">
+      <Icon
+        name={failed ? 'alert-triangle' : 'check'}
+        size={20}
+        color={failed ? twd.danger : twd.success}
+      />
+      <View style={styles.resultDetails}>
+        <ThemedText type="defaultBold" style={{ color: failed ? twd.danger : twd.success }}>
+          {failed ? 'Sync incomplete' : 'Sync complete'}
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {result.success} sent
+          {result.failed > 0 ? `, ${result.failed} failed` : ''}
+          {failed
+            ? rejected
+              ? ' — TWD received these records and refused them. Trying again will not change that: report it to the office.'
+              : ' — TWD could not be reached. Those records are still saved on this phone and will send by themselves once the connection is back.'
+            : '.'}
+        </ThemedText>
+        {/* The server's sentence, verbatim and visibly quoted as its own, so a
+            collector reading it out over the phone to the office is reading what
+            the server actually said. */}
+        {result.failure && (
+          <ThemedText type="small" style={{ color: twd.danger }}>
+            {result.failure.message}
+          </ThemedText>
+        )}
+      </View>
+    </View>
   );
 }
 

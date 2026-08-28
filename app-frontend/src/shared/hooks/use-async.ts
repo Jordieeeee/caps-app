@@ -6,6 +6,22 @@ export type AsyncState<T> =
   | { status: 'error' };
 
 /**
+ * What a loader is told about the call it is being asked to make.
+ *
+ * `force` means "a person just asked for this", which is the one thing a loader
+ * cannot work out for itself. It exists because cache-first services (see
+ * CollectorProfileService.load) legitimately answer most calls from the phone
+ * without going near the network — correct on mount and on focus, wrong when the
+ * collector has deliberately pulled the list down to check for changes.
+ *
+ * Optional at the call site: a loader that has no cache to skip keeps its
+ * existing `() => Promise<T>` signature and simply ignores the argument.
+ */
+export interface LoadOptions {
+  force: boolean;
+}
+
+/**
  * Load-once-on-mount with the three states a screen actually has to render.
  *
  * A discriminated union rather than the usual `{ data, loading, error }` bag,
@@ -19,14 +35,14 @@ export type AsyncState<T> =
  * property of the data, not of the load, and only the screen knows whether zero
  * rows means "no bills yet" or "no bills match this filter".
  */
-export function useAsync<T>(load: () => Promise<T>) {
+export function useAsync<T>(load: (options: LoadOptions) => Promise<T>) {
   const [state, setState] = useState<AsyncState<T>>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFailed, setRefreshFailed] = useState(false);
 
   const run = useCallback(async () => {
     try {
-      const data = await load();
+      const data = await load({ force: false });
       setState({ status: 'ready', data });
     } catch {
       setState({ status: 'error' });
@@ -61,12 +77,18 @@ export function useAsync<T>(load: () => Promise<T>) {
    * which reads the live state without this callback having to depend on it.
    * That dependency would matter: screens hand `refresh` to `useFocusEffect`, and
    * a callback with a new identity every render is an infinite refetch loop.
+   *
+   * `force` is not defaulted to true, even though a pull-to-refresh is the usual
+   * caller. The other caller is the focus effect, which fires on every return from
+   * a pushed screen and is not a request for anything — defaulting the other way
+   * would turn every back-tap into a forced round trip on the screens this option
+   * exists to keep off the network. A RefreshControl passes it explicitly.
    */
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options: LoadOptions = { force: false }) => {
     setRefreshing(true);
     setRefreshFailed(false);
     try {
-      setState({ status: 'ready', data: await load() });
+      setState({ status: 'ready', data: await load(options) });
     } catch {
       setState((prev) => (prev.status === 'ready' ? prev : { status: 'error' }));
       setRefreshFailed(true);

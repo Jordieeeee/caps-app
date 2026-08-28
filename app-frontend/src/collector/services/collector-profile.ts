@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { checkOnline } from '@/shared/hooks/use-connectivity';
 import { apiFetch } from '@/shared/services/api-client';
 
 /**
@@ -41,6 +42,30 @@ import { apiFetch } from '@/shared/services/api-client';
  * the cache, and on a cold offline start there is nothing else to key on.
  */
 const STORAGE_PREFIX = '@collector_profile';
+
+/**
+ * How long a cached employment record is treated as current.
+ *
+ * The Account screen used to go to the network on mount AND again on focus, and
+ * showed a skeleton until the first of those returned. That is the wrong trade for
+ * this particular record twice over.
+ *
+ * It is wrong on speed: an unreachable server does not fail fast, it fails at the
+ * platform's socket timeout, so a collector with no signal watched grey blocks for
+ * the better part of a minute before the screen fell back to a copy that had been
+ * sitting on the phone the whole time.
+ *
+ * It is wrong on the data too. An employment record changes when the office
+ * changes it — a transfer, a route reassignment, a corrected employee number —
+ * which happens on the scale of weeks. Re-asking every time a collector taps back
+ * from the edit screen buys nothing and costs the wait above.
+ *
+ * Five minutes, then: short enough that a change made at the office this morning
+ * is picked up when the collector next opens the screen, long enough that the
+ * screen is instant for the whole of a normal visit. Pull-to-refresh passes
+ * `force` and ignores this entirely — an explicit ask is always honoured.
+ */
+const STALE_MS = 5 * 60_000;
 
 /** Pre-scoping key. Read by nobody now; cleared on the next successful write. */
 const LEGACY_STORAGE_KEY = '@collector_profile';
@@ -102,6 +127,15 @@ export interface CollectorProfileSnapshot {
   fromCache: boolean;
   /** Epoch ms of the read this profile came from. */
   fetchedAt: number | null;
+  /**
+   * Whether TWD was asked for a fresh copy and could not be reached.
+   *
+   * Distinct from `fromCache`, which is now also true in the ordinary case where
+   * the record was recent enough that we did not ask at all. Collapsing the two
+   * would put "Could not reach TWD" on a screen that never tried — the same class
+   * of false claim the sync screen exists to avoid. Same split as RouteSnapshot.
+   */
+  pullFailed: boolean;
 }
 
 interface CachedProfile {
@@ -153,20 +187,60 @@ export class CollectorProfileService {
   }
 
   /**
-   * The record, live if possible and saved if not.
+   * The record: from the phone when the phone's copy will do, from TWD otherwise.
    *
-   * Throws only when both fail — an unreachable server with nothing cached is the
-   * one case where the screen genuinely has nothing to show, and it must not be
-   * dressed up as an empty profile.
+   * Cache first, deliberately. The old order was network-then-cache, which meant
+   * every open paid for a round trip before it could draw anything it already had.
+   * See STALE_MS.
+   *
+   * Two shortcuts, both of which end in an immediate return:
+   *
+   *   • A copy read less than STALE_MS ago is the answer. Nothing is asked for.
+   *   • Known-offline with any copy at all. `checkOnline` is a NetInfo read, not a
+   *     round trip, so this costs nothing and saves the full socket timeout —
+   *     which is the difference between a screen that draws and one that appears
+   *     to hang at exactly the moment a collector is standing at a gate being
+   *     asked who they are.
+   *
+   * Throws only when there is no copy AND the pull failed — the one case where the
+   * screen genuinely has nothing to show, and which must not be dressed up as an
+   * empty profile.
    */
-  static async load(owner: string): Promise<CollectorProfileSnapshot> {
+  static async load(
+    owner: string,
+    { force = false }: { force?: boolean } = {}
+  ): Promise<CollectorProfileSnapshot> {
+    const cached = await this.getCached(owner);
+
+    if (cached && !force && Date.now() - cached.fetchedAt < STALE_MS) {
+      return {
+        profile: cached.profile,
+        fromCache: true,
+        fetchedAt: cached.fetchedAt,
+        pullFailed: false,
+      };
+    }
+
+    if (cached && !(await checkOnline())) {
+      return {
+        profile: cached.profile,
+        fromCache: true,
+        fetchedAt: cached.fetchedAt,
+        pullFailed: true,
+      };
+    }
+
     try {
       const profile = await this.pull(owner);
-      return { profile, fromCache: false, fetchedAt: Date.now() };
+      return { profile, fromCache: false, fetchedAt: Date.now(), pullFailed: false };
     } catch (error) {
-      const cached = await this.getCached(owner);
       if (!cached) throw error;
-      return { profile: cached.profile, fromCache: true, fetchedAt: cached.fetchedAt };
+      return {
+        profile: cached.profile,
+        fromCache: true,
+        fetchedAt: cached.fetchedAt,
+        pullFailed: true,
+      };
     }
   }
 }
