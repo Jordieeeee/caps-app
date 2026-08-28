@@ -1,7 +1,8 @@
 const Collector = require('../models/Collector');
-const AppCredential = require('../models/AppCredential');
+const collectorRegistry = require('../services/collector-registry');
 const MeterReading = require('../models/MeterReading');
 const httpError = require('../utils/httpError');
+const ErrorCodes = require('../utils/errorCodes');
 const { normaliseMobile, INVALID_MOBILE_MESSAGE } = require('../utils/phone');
 
 /**
@@ -42,37 +43,39 @@ async function serviceRecord(collectorId) {
   return { readingsSubmitted: await MeterReading.countDocuments({ collectorId }) };
 }
 
-function present(raw, email) {
+/**
+ * The registry already normalises both sources to one shape, so this is now a
+ * pass-through with the service record attached rather than a translation layer.
+ * It used to reach into a `collectors` document and paper over the fields the
+ * portal's own staff records do not have; that guesswork moved into
+ * services/collector-registry.js, where each source is read on its own terms.
+ */
+function present(record) {
   return {
-    id: String(raw._id),
-    name: raw.name ?? null,
-    employeeId: raw.employeeId ?? null,
-    // The login email lives on the portal credential for portal-created staff and
-    // on the profile itself for seeded ones — same gap authController backfills.
-    email: email ?? raw.email ?? null,
-    phone: raw.phone ?? null,
-    zone: raw.zone ?? null,
-    routeIds: Array.isArray(raw.routeIds) ? raw.routeIds : [],
-    status: raw.status ?? 'active',
-    /** `YYYY-MM-DD`, stored as a calendar fact. See models/Collector.js. */
-    dateHired: raw.dateHired ?? null,
-    memberSince: raw.createdAt ? new Date(raw.createdAt).toISOString() : null,
+    id: record.id,
+    name: record.name,
+    employeeId: record.employeeId,
+    email: record.email,
+    phone: record.phone,
+    zone: record.zone,
+    routeIds: record.routeIds,
+    status: record.status,
+    dateHired: record.dateHired,
+    memberSince: record.memberSince,
   };
 }
 
 async function loadSelf(req) {
-  const collector = await Collector.findById(req.collectorScope.collectorId);
+  const collector = await collectorRegistry.findById(req.collectorScope.collectorId);
   if (!collector) throw httpError(404, 'Your collector record could not be found.');
   return collector;
 }
 
 async function respond(res, collector) {
-  const cred = collector.email ? null : await AppCredential.findByProfile(collector.id);
-
   res.json({
     profile: {
-      ...present(collector.toObject(), cred ? cred.email : null),
-      service: await serviceRecord(String(collector._id)),
+      ...present(collector),
+      service: await serviceRecord(collector.id),
     },
   });
 }
@@ -125,21 +128,43 @@ exports.update = async (req, res) => {
   const collector = await loadSelf(req);
 
   /**
+   * A collector from the PORTAL registry cannot edit their number here, and
+   * refusing is the only honest answer.
+   *
+   * Their phone lives in `collectorpersons.contacts[]`, which the Admin Portal
+   * owns and this backend reads without ever writing — the same rule that keeps
+   * it out of `consumers`, `serviceconnections` and `bills`. Writing it anyway
+   * would put the district's staff registry in two hands, and silently doing
+   * nothing would be worse: the screen would show a new number TWD does not
+   * have and cannot be told about.
+   *
+   * Seeded/legacy collectors keep the old behaviour, because `collectors` is
+   * this backend's own collection.
+   */
+  if (collector.source === 'portal') {
+    throw httpError(
+      403,
+      'Your contact number is kept by the TWD office. Ask them to update it for you.',
+      ErrorCodes.NOT_SUPPORTED
+    );
+  }
+
+  /**
    * A targeted `$set`, never `collector.save()`.
    *
    * `save()` validates the whole document, and this schema marks `name`, `email`,
    * `passwordHash` and `employeeId` required — none of which a portal-created
-   * collector necessarily carries, because the portal writes its own registry
-   * shape. Saving one would fail with validation errors about fields the collector
-   * was never asked for and cannot supply. `updateOne` validates only the path
-   * actually being written, which is also the honest scope: this request changes a
-   * phone number, so a phone number is what should have to be valid.
+   * collector necessarily carries. Saving one would fail with validation errors
+   * about fields the collector was never asked for and cannot supply. `updateOne`
+   * validates only the path actually being written, which is also the honest
+   * scope: this request changes a phone number, so a phone number is what should
+   * have to be valid.
    */
-  const updated = await Collector.findByIdAndUpdate(
+  await Collector.findByIdAndUpdate(
     collector.id,
     { $set: { phone: normalised } },
     { new: true, runValidators: true }
   );
 
-  await respond(res, updated);
+  await respond(res, await loadSelf(req));
 };

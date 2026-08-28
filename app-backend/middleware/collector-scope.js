@@ -1,7 +1,6 @@
 const GoogleUser = require('../models/GoogleUser');
 const CollectorAllowlist = require('../models/CollectorAllowlist');
-const Collector = require('../models/Collector');
-const AppCredential = require('../models/AppCredential');
+const collectorRegistry = require('../services/collector-registry');
 const httpError = require('../utils/httpError');
 const ErrorCodes = require('../utils/errorCodes');
 
@@ -35,6 +34,12 @@ const ErrorCodes = require('../utils/errorCodes');
  *                 NULL for admin, which is the one caller entitled to look
  *                 across collectors; controllers must treat null as "no filter",
  *                 never as "no access".
+ *
+ * Resolution moved to services/collector-registry.js, which reads the Admin
+ * Portal's own staff registry (collectorpersons + employments) before falling
+ * back to this repo's seeded `collectors`. That is what makes a REAL TWD
+ * collector able to sign in at all — before it, only the six seeded accounts
+ * resolved, and an actual employee was handed the consumer claim screen.
  *
  * SECURITY: nothing here is read from the body or params. The Google branch
  * re-derives standing from the database on every request — allowlist membership
@@ -79,7 +84,7 @@ function requireCollectorScope({ allowAdmin = false } = {}) {
         return next(httpError(403, 'Insufficient permissions', ErrorCodes.ROLE_NOT_PERMITTED));
       }
 
-      const collector = await findCollectorByEmail(email);
+      const collector = await collectorRegistry.findByEmail(email);
       if (!collector) {
         // Distinct from the generic 403 on purpose. This caller is already an
         // authenticated, allowlisted collector, so there is no account-existence
@@ -103,35 +108,12 @@ function requireCollectorScope({ allowAdmin = false } = {}) {
         return next(httpError(403, 'Insufficient permissions', ErrorCodes.ROLE_NOT_PERMITTED));
       }
 
-      req.collectorScope = { kind: 'google', collectorId: String(collector._id) };
+      req.collectorScope = { kind: 'google', collectorId: collector.id };
       return next();
     } catch (err) {
       return next(err);
     }
   };
-}
-
-/**
- * Google email -> `collectors` document, by the two links that exist.
- *
- * The profile's own `email` is tried first: it is required and unique
- * (models/Collector.js), so a match there is unambiguous. Portal-created staff
- * are the gap — models/AppCredential.js:16 notes the portal's login email "never
- * even matches the profile's", and the profile may carry no email at all — so
- * the credential store is the second link, narrowed to collector credentials so
- * a shared address can never resolve a consumer or admin login into a collector
- * session.
- */
-async function findCollectorByEmail(email) {
-  const direct = await Collector.findOne({ email }).lean();
-  if (direct) return direct;
-
-  const cred = await AppCredential.findByEmail(email);
-  if (!cred || String(cred.role).toLowerCase() !== 'collector') return null;
-  // The portal's own kill switch, same check authController.refresh applies.
-  if (cred.status && cred.status !== 'active') return null;
-
-  return Collector.findById(cred.profileId).lean();
 }
 
 module.exports = { requireCollectorScope };
