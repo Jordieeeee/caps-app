@@ -113,6 +113,21 @@ export interface CollectorProfile {
   /** ISO 8601 — when TWD created the record. */
   memberSince: string | null;
   service: CollectorServiceRecord;
+  /**
+   * Whether this collector may set an email/password credential from the app.
+   *
+   * True only for the Google-allowlisted identity, which has no password anywhere
+   * in TWD's systems — the sign-in screen offers them a password box that can
+   * never work. False for a seeded or portal collector, whose credential the
+   * office manages and which this app must not offer to overwrite.
+   *
+   * Optional in the type because a phone can be holding a profile cached by an
+   * older build, from before the server sent these. `?? false` at the call site
+   * hides the row rather than offering something the server may refuse.
+   */
+  canSetPassword?: boolean;
+  /** Whether one is set already. Decides "Set" versus "Change" on the button. */
+  hasPassword?: boolean;
 }
 
 /**

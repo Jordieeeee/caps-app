@@ -116,8 +116,16 @@ function LoginPhase({ onAuthenticated }: { onAuthenticated: (t: string) => void 
       // Deliberately NOT ctx.signIn(): that persists to the keychain and
       // adopts the role into the app's state machine — both forbidden here.
       // We want exactly one thing: an in-memory access token.
-      const session = await api.login(email, password);
-      onAuthenticated(session.accessToken);
+      const result = await api.login(email, password);
+      // An Admin always authenticates through the password system. A `google`
+      // result here means the credentials belong to a consumer who set their own
+      // password (api-client's LoginResult) — correct credentials, wrong door,
+      // and there is no access token behind them to manage an allowlist with.
+      if (result.kind !== 'password') {
+        setError('These are not office credentials.');
+        return;
+      }
+      onAuthenticated(result.session.accessToken);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sign-in failed.');
     } finally {

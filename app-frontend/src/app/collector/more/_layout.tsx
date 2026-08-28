@@ -28,6 +28,13 @@ export default function CollectorMoreLayout() {
         name="edit-details"
         options={{ title: 'Edit Details', headerBackTitle: 'Account' }}
       />
+      {/* "Password" covers setting and changing alike — a header promising "Set a
+          password" over a change form is the wrong promise for half the people who
+          open it. */}
+      <Stack.Screen
+        name="set-password"
+        options={{ title: 'Password', headerBackTitle: 'Account' }}
+      />
       <Stack.Screen name="sync-status" options={{ title: 'Sync Status' }} />
       <Stack.Screen name="printer" options={{ title: 'Printer' }} />
     </Stack>

@@ -380,7 +380,10 @@ exports.verifyClaim = async (req, res) => {
  * client swaps old for new with one code path. */
 function jwtSignSession(user, role) {
   return jwt.sign(
-    { sub: String(user._id), role, email: user.email },
+    // `via: 'google'` for the same reason the callback sets it: this session was
+    // proven by Google plus an SMS code, not by a password. See
+    // controllers/googleAuthController.js.
+    { sub: String(user._id), role, email: user.email, via: 'google' },
     process.env.JWT_SECRET,
     { expiresIn: process.env.GOOGLE_SESSION_TTL || '7d' }
   );

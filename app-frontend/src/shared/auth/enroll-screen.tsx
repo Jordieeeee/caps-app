@@ -13,9 +13,9 @@ import { TwdTextField } from '@/shared/components/twd-text-field';
 import { useConnectivity } from '@/shared/hooks/use-connectivity';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { Radius, Spacing } from '@/shared/theme/twd';
+import { passwordProblem } from '@/shared/auth/password-policy';
+import { PasswordChecklist } from '@/shared/components/password-checklist';
 import { AuthError, ClientErrorCode } from '@/shared/types/auth';
-
-const MIN_PASSWORD_LENGTH = 8;
 
 /**
  * Consumer account enrolment.
@@ -59,9 +59,8 @@ export function EnrollScreen() {
     if (!name.trim()) next.name = 'Enter your full name.';
     if (!email.trim()) next.email = 'Enter your email address.';
     else if (!/^\S+@\S+\.\S+$/.test(email.trim())) next.email = 'Enter a valid email address.';
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      next.password = `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
-    }
+    const problem = passwordProblem(password);
+    if (problem) next.password = problem;
     setErrors(next);
     return Object.keys(next).length === 0;
   }
@@ -142,13 +141,17 @@ export function EnrollScreen() {
                   value={password}
                   onChangeText={setPassword}
                   error={errors.password}
-                  hint={`At least ${MIN_PASSWORD_LENGTH} characters.`}
+                  // The checklist below replaces the static hint that was here.
+                  // Same rules, same component as the Account screen's password
+                  // form — one policy, stated once, answered live in both places.
                   secureTextEntry
                   autoCapitalize="none"
                   autoComplete="new-password"
                   textContentType="newPassword"
                   editable={!busy}
                 />
+
+                <PasswordChecklist password={password} />
 
                 <TwdButton
                   label="Create account"

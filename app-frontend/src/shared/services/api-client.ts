@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import { secureTokenStore } from '@/shared/services/secure-token-store';
 import { googleSessionStore } from '@/shared/services/google-session-store';
 import { isAccessTokenExpired } from '@/shared/services/jwt';
+import type { GoogleSession } from '@/shared/types/google-auth';
 import {
   AuthError,
   AuthErrorCode,
@@ -117,14 +118,44 @@ async function rawFetch(path: string, init: RequestInit): Promise<Response> {
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
-export async function login(email: string, password: string): Promise<StoredSession> {
+/**
+ * What `POST /auth/login` came back with — and it is genuinely two things.
+ *
+ * The email/password form is one door into two credential systems. A portal or
+ * seeded account gets the password system's session: an access token, a rotating
+ * refresh token, a `consumers`/`collectors` id as `sub`. A Google consumer who set
+ * a password on themselves (app-backend/models/MobileCredential.js) gets the
+ * Google system's session instead — one bearer token, no refresh, and crucially
+ * the SAME `sub` their Google sign-in produces, so both doors lead to the same
+ * accounts.
+ *
+ * Discriminated here rather than left to the caller to sniff, because "which
+ * session is this?" decides which store it is persisted in and which state the app
+ * enters; a caller guessing from the presence of a field would eventually guess
+ * wrong on an error shape.
+ */
+export type LoginResult =
+  | { kind: 'password'; session: StoredSession }
+  | { kind: 'google'; session: GoogleSession };
+
+export async function login(email: string, password: string): Promise<LoginResult> {
   const response = await rawFetch('/auth/login', {
     method: 'POST',
     headers: jsonHeaders,
     body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
   });
   if (!response.ok) throw await parseError(response);
-  return normalizeSession(await response.json());
+
+  const body = await response.json();
+  // `sessionToken` is the Google system's shape and appears in no other response
+  // from this endpoint. See the type above.
+  if (body?.sessionToken) {
+    return {
+      kind: 'google',
+      session: { sessionToken: body.sessionToken, role: body.role, email: body.email },
+    };
+  }
+  return { kind: 'password', session: normalizeSession(body) };
 }
 
 export async function register(

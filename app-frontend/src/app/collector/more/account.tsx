@@ -136,6 +136,39 @@ export default function CollectorAccountScreen() {
             />
           </ScreenSection>
 
+          {/* Signing in — only for the identity that has a choice about it.
+
+              `canSetPassword` is true only for a Google-allowlisted collector,
+              who has no password anywhere in TWD's systems. A seeded or portal
+              collector's credential belongs to the office, and a row here would
+              offer to change something this app cannot change. It is also absent
+              on a phone showing a cached record from an older build, which is the
+              right way round: better a row that appears on the next refresh than
+              one that appears on a guess and is refused by the server.
+
+              Worth more to a collector than to a consumer, and the screen behind
+              it says why: someone locked out of their Google account is holding
+              unsent readings and no way to authenticate the sync. */}
+          {snapshot.profile.canSetPassword && (
+            <ScreenSection gap={Spacing.two}>
+              <SectionTitle icon="user" title="Signing in" />
+              <TwdButton
+                label={
+                  snapshot.profile.hasPassword ? 'Change your password' : 'Set a password'
+                }
+                icon="pencil"
+                variant="secondary"
+                onPress={() => router.push('/collector/more/set-password')}
+                accessibilityHint="Lets you sign in with your email address instead of Google"
+              />
+              <ThemedText type="small" themeColor="textSecondary">
+                {snapshot.profile.hasPassword
+                  ? 'You can sign in with Continue with Google or with your email address and password. Both open this same account.'
+                  : 'You sign in with Google. Add a password and you can also sign in with your email address — the way back in if you ever lose access to your Google account.'}
+              </ThemedText>
+            </ScreenSection>
+          )}
+
           <ScreenSection gap={Spacing.three}>
             <SectionTitle icon="map" title="Assignment" />
             <ThemedView type="backgroundElement" style={styles.card}>

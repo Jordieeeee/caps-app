@@ -18,6 +18,11 @@ export default function ConsumerAccountLayout() {
           read on the screen and it has to make the same promise the button does. The
           app cannot link anything; it asks TWD to. */}
       <Stack.Screen name="link-account" options={{ title: 'Request an account' }} />
+      {/* The title says which of the two things this screen is doing only once the
+          screen knows; "Password" covers setting and changing alike, and a header
+          that said "Set a password" over a change form would be the wrong promise
+          for half the people who open it. */}
+      <Stack.Screen name="set-password" options={{ title: 'Password' }} />
     </Stack>
   );
 }

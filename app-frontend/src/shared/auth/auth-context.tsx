@@ -329,19 +329,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [adoptGoogleSession]
   );
 
+  /**
+   * Email and password — for either credential system.
+   *
+   * The form is one door into two of them, so the response decides which state
+   * this enters. A Google consumer who set a password on themselves gets back the
+   * Google system's session (see api.login's LoginResult), and it must be adopted
+   * as one: same store, same state, same `sub`. Saving it to the keychain as a
+   * StoredSession instead would leave a session with no refresh token where the
+   * refresh path expects one, and — worse — an identity the consumer scope would
+   * resolve as a `consumers._id`, showing them an app with none of their accounts.
+   */
   const signIn = useCallback(
     async (email: string, password: string) => {
       dispatch({ type: 'authenticating' });
       try {
-        const session = await api.login(email, password);
-        await secureTokenStore.save(session);
-        adopt(session);
+        const result = await api.login(email, password);
+        if (result.kind === 'google') {
+          await adoptGoogleSession(result.session);
+          return;
+        }
+        await secureTokenStore.save(result.session);
+        adopt(result.session);
       } catch (error) {
         dispatch({ type: 'signedOut', reason: { kind: 'initial' } });
         throw error;
       }
     },
-    [adopt]
+    [adopt, adoptGoogleSession]
   );
 
   const enroll = useCallback(

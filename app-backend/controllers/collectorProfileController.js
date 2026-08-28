@@ -3,6 +3,7 @@ const collectorRegistry = require('../services/collector-registry');
 const MeterReading = require('../models/MeterReading');
 const httpError = require('../utils/httpError');
 const ErrorCodes = require('../utils/errorCodes');
+const { passwordState } = require('./credentialController');
 const { normaliseMobile, INVALID_MOBILE_MESSAGE } = require('../utils/phone');
 
 /**
@@ -71,17 +72,29 @@ async function loadSelf(req) {
   return collector;
 }
 
-async function respond(res, collector) {
+async function respond(res, req, collector) {
   res.json({
     profile: {
       ...present(collector),
       service: await serviceRecord(collector.id),
+      /**
+       * Whether this collector can hold an app-set password, and whether they do.
+       *
+       * True only for the Google-allowlisted identity, which has no password
+       * anywhere in TWD's systems — the same gap the consumer side has, and worse
+       * here: a collector locked out mid-route is a collector who cannot file the
+       * readings already on their phone. A seeded or portal collector has a
+       * credential the office manages, so there is nothing to offer them.
+       *
+       * Computed by credentialController so both profiles answer identically.
+       */
+      ...(await passwordState(req, req.collectorScope?.kind === 'google')),
     },
   });
 }
 
 exports.get = async (req, res) => {
-  await respond(res, await loadSelf(req));
+  await respond(res, req, await loadSelf(req));
 };
 
 /**
@@ -166,5 +179,5 @@ exports.update = async (req, res) => {
     { new: true, runValidators: true }
   );
 
-  await respond(res, await loadSelf(req));
+  await respond(res, req, await loadSelf(req));
 };

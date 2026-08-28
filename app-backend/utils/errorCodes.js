@@ -33,6 +33,13 @@ const ErrorCodes = {
   /** Code wrong, expired, superseded, or never issued — deliberately one code. */
   OTP_INVALID: 'OTP_INVALID',
   /**
+   * A password was rejected before it was ever stored — too short, or the
+   * current one did not match. Distinct from INVALID_CREDENTIALS, which is
+   * about signing in: this is about setting one, where the caller is already
+   * authenticated and there is no existence oracle to protect.
+   */
+  PASSWORD_REJECTED: 'PASSWORD_REJECTED',
+  /**
    * The SMS gateway itself failed or timed out. Distinct from every other
    * failure so the client can say "we couldn't send it" (retry makes sense,
    * soon) rather than implying the account was wrong. Never carries gateway

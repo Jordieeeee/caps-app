@@ -1,7 +1,11 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { passwordProblem } = require('../utils/passwordPolicy');
+const { resolveGoogleRole } = require('../utils/googleRole');
 const Collector = require('../models/Collector');
 const Consumer = require('../models/Consumer');
+const GoogleUser = require('../models/GoogleUser');
+const MobileCredential = require('../models/MobileCredential');
 const AppCredential = require('../models/AppCredential');
 const RefreshToken = require('../models/RefreshToken');
 const httpError = require('../utils/httpError');
@@ -104,6 +108,13 @@ function assertActive(user) {
  */
 exports.register = async (req, res) => {
   const { name, email, password } = req.body;
+
+  // Enrolment enforced nothing at all: the "at least 8 characters" on the sign-up
+  // screen was a client-side courtesy, so `POST /auth/register` would happily
+  // create a consumer whose password was one character. The rule the app has
+  // always displayed is now the rule the server keeps — see utils/passwordPolicy.js.
+  const problem = passwordProblem(password);
+  if (problem) throw httpError(400, problem, ErrorCodes.PASSWORD_REJECTED);
   // Email must be unique across all three collections now that each role
   // lives apart — one index can no longer cover all of them.
   if (
@@ -174,18 +185,74 @@ async function authenticate(email, password) {
   return user;
 }
 
+/**
+ * The third credential store: a password a Google consumer or collector set on
+ * themselves.
+ *
+ * Tried LAST, deliberately. `appcredentials` is the district's system of record and
+ * must always win — if the office later issues a real portal login for the same
+ * address, that login takes over and the row here goes dormant rather than
+ * competing with it.
+ *
+ * What comes back is NOT a StoredSession. It is the same `{ sessionToken, role,
+ * email }` the Google callback returns, with the same `sub` — because that is the
+ * whole design: the password is a second way into one identity, so the session it
+ * opens has to be the identity's own. Hand back a password-system session here and
+ * `requireConsumerScope` would resolve `sub` as a `consumers._id`, match no service
+ * connection, and show the consumer an app with none of their accounts in it.
+ *
+ * The role is re-read from the database rather than assumed. A credential set while
+ * someone held a claim must not keep letting them in as a consumer after an admin
+ * has unlinked it.
+ */
+async function authenticateMobileCredential(email, password) {
+  const credential = await MobileCredential.findByEmail(email);
+  if (!credential || !(await credential.comparePassword(password))) return null;
+
+  const user = await GoogleUser.findById(credential.googleUserId).lean();
+  if (!user) return null;
+
+  /**
+   * The role is re-derived, exactly as the Google callback derives it — never read
+   * off the row. utils/googleRole.js explains why that distinction is
+   * security-relevant: a collector's standing lives in the allowlist and NOT in
+   * `google_users.role`, so reading the row would let an ex-collector keep
+   * collector sessions through the password door long after the office revoked
+   * them. Consumers are re-checked by the same call for free.
+   */
+  const role = await resolveGoogleRole(user);
+  // 'unclaimed' has nothing to sign in to but the claim flow, and could not have
+  // set a password in the first place. Refused rather than admitted to a shell
+  // with no account behind it.
+  if (role !== 'consumer' && role !== 'collector') return null;
+
+  const sessionToken = jwt.sign(
+    // `via: 'password'` — this session was opened with the password itself, which
+    // is what stops it from silently rotating that password. See
+    // controllers/credentialController.js `setPassword`.
+    { sub: String(user._id), role, email: user.email, via: 'password' },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.GOOGLE_SESSION_TTL || '7d' }
+  );
+
+  return { sessionToken, role, email: user.email };
+}
+
 exports.login = async (req, res) => {
   const { email, password } = req.body;
 
   const user = await authenticate(email, password);
-  if (!user) {
-    throw httpError(401, 'Invalid email or password.', ErrorCodes.INVALID_CREDENTIALS);
+  if (user) {
+    // Profile-level status gate. For a portal account this is in addition to the
+    // credential's own status, already checked in authenticate().
+    assertActive(user);
+    return res.json(await issueSession(user));
   }
-  // Profile-level status gate. For a portal account this is in addition to the
-  // credential's own status, already checked in authenticate().
-  assertActive(user);
 
-  res.json(await issueSession(user));
+  const googleSession = await authenticateMobileCredential(email, password);
+  if (googleSession) return res.json(googleSession);
+
+  throw httpError(401, 'Invalid email or password.', ErrorCodes.INVALID_CREDENTIALS);
 };
 
 /**

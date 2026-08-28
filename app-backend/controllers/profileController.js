@@ -1,6 +1,8 @@
 const Consumer = require('../models/Consumer');
 const AppCredential = require('../models/AppCredential');
 const httpError = require('../utils/httpError');
+const ErrorCodes = require('../utils/errorCodes');
+const { passwordState } = require('./credentialController');
 const { displayName, primaryContact } = require('../utils/consumerIdentity');
 const { normaliseMobile, INVALID_MOBILE_MESSAGE } = require('../utils/phone');
 
@@ -38,10 +40,11 @@ const MOBILE = 'mobile';
 const REQUIRED_ADDRESS_PARTS = ['houseStreet', 'barangay', 'city', 'province'];
 const ADDRESS_PARTS = [...REQUIRED_ADDRESS_PARTS, 'zip'];
 
-function present(raw, email) {
+function present(raw, email, extra = {}) {
   const contact = primaryContact(raw.contacts);
 
   return {
+    ...extra,
     // Identity — display only. See models/Consumer.js.
     consumerNo: raw.consumerNo ?? null,
     consumerType: raw.consumerType ?? null,
@@ -103,7 +106,15 @@ async function emailFor(consumer) {
 
 exports.get = async (req, res) => {
   const consumer = await loadSelf(req);
-  res.json({ profile: present(consumer.toObject(), await emailFor(consumer)) });
+  res.json({
+    profile: {
+      ...present(consumer.toObject(), await emailFor(consumer)),
+      // Whether this consumer can hold an app-set password, and whether they do.
+      // Computed by credentialController so the collector profile answers the same
+      // question the same way — the credential is not a consumer thing.
+      ...(await passwordState(req, req.consumerScope?.kind === 'google')),
+    },
+  });
 };
 
 /**

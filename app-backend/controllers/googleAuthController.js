@@ -1,8 +1,8 @@
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const GoogleUser = require('../models/GoogleUser');
-const CollectorAllowlist = require('../models/CollectorAllowlist');
 const httpError = require('../utils/httpError');
+const { resolveGoogleRole } = require('../utils/googleRole');
 const ErrorCodes = require('../utils/errorCodes');
 
 /**
@@ -125,16 +125,27 @@ exports.googleCallback = async (req, res) => {
   // stored users.role is left alone. Session-scoped means removing an email
   // from the allowlist demotes them on their next sign-in with no migration —
   // revocation stays instant.
-  const allowlisted = await CollectorAllowlist.isAllowed(normalisedEmail);
-  const role = allowlisted ? 'collector' : user.role;
+  //
+  // Shared with the password door into the same identity (authController's
+  // `authenticateMobileCredential`), because the two must decide this the same
+  // way or the newer one becomes a way around the revocation above.
+  const role = await resolveGoogleRole({ ...user.toObject?.() ?? user, email: normalisedEmail });
 
   // Same secret as the existing auth middleware, so /api routes guarded by
   // middleware/auth.js accept these tokens today. Claims mirror that contract:
   // { sub: user id, role, ... }. Future claim/verify endpoints should gate on
   // the lowercase roles defined here.
-  const sessionToken = jwt.sign({ sub: user.id, role, email: normalisedEmail }, process.env.JWT_SECRET, {
-    expiresIn: SESSION_TTL,
-  });
+  // `via` records HOW this session was proven, which is not the same question as
+  // who it belongs to. Setting a password without knowing the old one is allowed
+  // only for a session Google itself just vouched for — that is the whole recovery
+  // path for someone who has forgotten the password they set here (see
+  // controllers/profileController.js `setPassword`). A session opened WITH that
+  // password cannot silently rotate it.
+  const sessionToken = jwt.sign(
+    { sub: user.id, role, email: normalisedEmail, via: 'google' },
+    process.env.JWT_SECRET,
+    { expiresIn: SESSION_TTL }
+  );
 
   res.json({ sessionToken, role, email: normalisedEmail });
 };

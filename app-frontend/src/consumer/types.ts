@@ -202,6 +202,21 @@ export interface ConsumerProfile {
   accountNumbers: string[];
   /** ISO 8601. */
   memberSince: string | null;
+  /**
+   * Whether this consumer may set an email/password credential from the app.
+   *
+   * False for a password consumer — they already sign in that way, and their
+   * credential belongs to the Admin Portal, so the app has nothing to offer them.
+   * True only for a Google identity, which is the case that has no password
+   * anywhere in the system.
+   */
+  canSetPassword: boolean;
+  /**
+   * Whether one is set already. Separate from `canSetPassword` because "may I
+   * offer this?" and "is it done?" are different questions, and one flag would
+   * force the screen to guess which it was being told.
+   */
+  hasPassword: boolean;
 }
 
 /** Exactly what PATCH /profile accepts. Anything else the server ignores. */

@@ -121,7 +121,7 @@ export default function ConsumerAccountScreen() {
           most likely to want out of the app (nothing loading, network unhappy) was
           exactly the state that hid the button. Settings depend on the session,
           not on any fetch, so they are not gated on one. */}
-      <SettingsSection />
+      <SettingsSection profile={data?.profile ?? null} />
     </ScreenContainer>
   );
 }
@@ -630,8 +630,9 @@ function AccountCard({ account }: { account: Account }) {
   );
 }
 
-function SettingsSection() {
+function SettingsSection({ profile }: { profile: ConsumerProfile | null }) {
   const { signOut } = useAuth();
+  const router = useRouter();
 
   /**
    * Sign out confirms, but stays light about it.
@@ -644,7 +645,10 @@ function SettingsSection() {
    * everything gets ignored when it shouts about something.
    */
   const confirmSignOut = () => {
-    Alert.alert('Sign out?', "You'll need your email and password to sign back in.", [
+    // Not "you'll need your email and password": a consumer who signed in with
+    // Google may well not have one, which is the whole subject of the section
+    // above. The wording covers both ways in without naming either.
+    Alert.alert('Sign out?', 'You will need to sign in again to see your bills.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
     ]);
@@ -663,6 +667,36 @@ function SettingsSection() {
           setting.
         </ThemedText>
       </ScreenSection>
+
+      {/* Sign-in, and only for the identity that has a choice to make about it.
+
+          `canSetPassword` is false for a consumer who already signs in with an
+          email and password — their credential is the Admin Portal's, and a row
+          here would offer to change something this app cannot change. It is also
+          false whenever the profile failed to load, which is the right way round:
+          a row that appears on a guess and then refuses at the server is worse
+          than a row that waits for the next refresh.
+
+          See app-frontend/src/app/consumer/account/set-password.tsx for why a
+          Google consumer needs this at all — the short version is that the
+          sign-in screen offers them a password box that can never work. */}
+      {profile?.canSetPassword && (
+        <ScreenSection gap={Spacing.two}>
+          <ThemedText type="defaultBold">Signing in</ThemedText>
+          <TwdButton
+            label={profile.hasPassword ? 'Change your password' : 'Set a password'}
+            icon="user"
+            variant="secondary"
+            onPress={() => router.push('/consumer/account/set-password')}
+            accessibilityHint="Lets you sign in with your email address instead of Google"
+          />
+          <ThemedText type="small" themeColor="textSecondary">
+            {profile.hasPassword
+              ? 'You can sign in with Continue with Google or with your email address and password. Both open this same account.'
+              : 'You sign in with Google. Add a password and you can also sign in with your email address — useful if you ever lose access to your Google account.'}
+          </ThemedText>
+        </ScreenSection>
+      )}
 
       <ScreenSection gap={Spacing.three}>
         {/* Send feedback and Your feedback were here. They are on Notices now: that
