@@ -1,8 +1,8 @@
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { useRefreshOnChange } from '@/collector/hooks/use-refresh-on-change';
 import { ThemedView } from '@/components/themed-view';
 import { OfflineStorage } from '@/collector/services/offline-storage';
 import { RouteAccountService } from '@/collector/services/route-accounts';
@@ -147,19 +147,13 @@ export default function DailySummaryScreen() {
    * the whole day's summary replaced by a spinner and then put back, which on
    * a screen about work already filed reads as work lost.
    *
-   * First focus skipped: useAsync loads on mount, so both firing meant the
-   * summary was built twice every time the tab was opened.
+   * First focus skipped, and every focus where nothing was written: useAsync loads
+   * on mount, so both firing meant the summary was built twice every time the tab
+   * was opened. That hand-rolled first-focus ref is now the shared rule in
+   * collector/hooks/use-refresh-on-change.ts, which also declines to rebuild the
+   * summary when the collector merely tapped back onto this tab.
    */
-  const settledFirstFocus = useRef(false);
-  useFocusEffect(
-    useCallback(() => {
-      if (!settledFirstFocus.current) {
-        settledFirstFocus.current = true;
-        return;
-      }
-      void refresh();
-    }, [refresh])
-  );
+  useRefreshOnChange(refresh);
 
   const summary = useMemo(
     () => (state.status === 'ready' ? state.data : null),

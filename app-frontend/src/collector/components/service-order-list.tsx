@@ -1,8 +1,9 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useCallback, useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { useRefreshOnChange } from '@/collector/hooks/use-refresh-on-change';
 import { ServiceOrderService, type ServiceOrderRow } from '@/collector/services/service-orders';
 import { timeOfDay } from '@/collector/services/today';
 import { Icon } from '@/shared/components/icon';
@@ -76,15 +77,16 @@ export function ServiceOrderList({ kind }: { kind: NoticeKind }) {
   }, [refresh]);
 
   /**
+   * Refresh on return only when something was actually written.
+   *
    * `refresh`, not `reload`: returning from a confirmation is the common way this
    * list goes stale, and reload blanks to a skeleton — so walking back from a gate
-   * would flash the whole list away and rebuild it.
+   * would flash the whole list away and rebuild it. But it used to run on EVERY
+   * focus, which meant a spinner over unchanged rows every time the collector
+   * tapped this tab. useRefreshOnChange keeps the confirmation case and drops the
+   * rest.
    */
-  useFocusEffect(
-    useCallback(() => {
-      void refresh();
-    }, [refresh])
-  );
+  useRefreshOnChange(refresh);
 
   const snapshot = state.status === 'ready' ? state.data : null;
   const rows = snapshot?.rows ?? [];

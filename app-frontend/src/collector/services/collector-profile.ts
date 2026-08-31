@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { bumpCollectorData } from '@/collector/services/data-revision';
+
 import { checkOnline } from '@/shared/hooks/use-connectivity';
 import { apiFetch } from '@/shared/services/api-client';
 
@@ -78,6 +80,9 @@ async function writeCache(owner: string, profile: CollectorProfile): Promise<voi
   try {
     const cached: CachedProfile = { profile, fetchedAt: Date.now() };
     await AsyncStorage.setItem(storageKeyFor(owner), JSON.stringify(cached));
+    // The Account screen refreshes on return only when something changed; a profile
+    // edit is that something. See services/data-revision.ts.
+    bumpCollectorData();
     // Drop the unscoped blob so a stale foreign profile cannot resurface if a
     // future read ever falls back to it.
     await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);

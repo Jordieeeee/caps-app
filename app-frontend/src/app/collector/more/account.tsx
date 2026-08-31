@@ -1,8 +1,9 @@
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useRef } from 'react';
+import { useRouter } from 'expo-router';
+import { useCallback } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { useRefreshOnChange } from '@/collector/hooks/use-refresh-on-change';
 import { ThemedView } from '@/components/themed-view';
 import {
   CollectorProfileService,
@@ -66,16 +67,9 @@ export default function CollectorAccountScreen() {
    * save path does not need it either: `update` writes the server's answer straight
    * to the cache, so the value is already there for the load below to read.
    */
-  const mounted = useRef(false);
-  useFocusEffect(
-    useCallback(() => {
-      if (!mounted.current) {
-        mounted.current = true;
-        return;
-      }
-      void refresh();
-    }, [refresh])
-  );
+  // Same rule as every other collector screen: on return, and only if a profile
+  // edit actually landed. See collector/hooks/use-refresh-on-change.ts.
+  useRefreshOnChange(refresh);
 
   const snapshot = state.status === 'ready' ? state.data : null;
 

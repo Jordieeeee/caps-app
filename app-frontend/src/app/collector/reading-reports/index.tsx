@@ -1,8 +1,9 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { useRefreshOnChange } from '@/collector/hooks/use-refresh-on-change';
 import { RouteAccountService, type RouteAccountRow } from '@/collector/services/route-accounts';
 import { ServiceOrderService } from '@/collector/services/service-orders';
 import { timeOfDay } from '@/collector/services/today';
@@ -83,11 +84,9 @@ export default function RouteAccountsScreen() {
    * `refresh`, not `reload`: reload blanks to a skeleton, so walking back from a
    * meter would flash the whole route away and rebuild it.
    */
-  useFocusEffect(
-    useCallback(() => {
-      void refresh();
-    }, [refresh])
-  );
+  // Only when a reading or an order was actually written — not on every tab tap.
+  // See collector/hooks/use-refresh-on-change.ts.
+  useRefreshOnChange(refresh);
 
   const snapshot = state.status === 'ready' ? state.data : null;
 
@@ -169,9 +168,18 @@ export default function RouteAccountsScreen() {
                  * list with nothing on screen admitting it.
                  */
                 snapshot.scope
-                  ? snapshot.scope.zoneScoped
-                    ? snapshot.scope.zones.join(', ')
-                    : 'All zones — no zone assigned to you'
+                  ? !snapshot.scope.zoneScoped
+                    ? 'All zones — no zone assigned to you'
+                    : snapshot.scope.zones.length > 1
+                      ? /**
+                         * One collector, one zone, is the district's rule. More than
+                         * one posting is a mistake in the office's records, and the
+                         * route silently MERGES them — so this screen would show a
+                         * round nobody assigned, looking exactly like a correct one.
+                         * Naming both zones is what makes it reportable.
+                         */
+                        `${snapshot.scope.zones.join(' + ')} — two zones assigned, ask the office`
+                      : snapshot.scope.zones[0]
                   : null,
               ]
                 .filter(Boolean)
@@ -316,11 +324,9 @@ function ServiceOrderLinks() {
 
   // Confirming an order is the thing that changes these numbers, and it happens on
   // a screen pushed from here — so the count has to be re-read on the way back.
-  useFocusEffect(
-    useCallback(() => {
-      void refresh();
-    }, [refresh])
-  );
+  // Only when a reading or an order was actually written — not on every tab tap.
+  // See collector/hooks/use-refresh-on-change.ts.
+  useRefreshOnChange(refresh);
 
   const counts = state.status === 'ready' ? state.data : null;
 

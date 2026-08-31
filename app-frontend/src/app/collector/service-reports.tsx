@@ -1,8 +1,8 @@
-import { useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
+import { useRefreshOnChange } from "@/collector/hooks/use-refresh-on-change";
 import { ThemedView } from "@/components/themed-view";
 import { Spacing } from "@/constants/theme";
 import { useTwdTheme } from "@/shared/hooks/use-twd-theme";
@@ -58,11 +58,9 @@ export default function ServiceReportsScreen() {
    * walking back here after a meter must not show the figure from before it.
    * `refresh` rather than `reload`: reload blanks to a skeleton.
    */
-  useFocusEffect(
-    useCallback(() => {
-      void refresh();
-    }, [refresh]),
-  );
+  // Reports are derived from the reading outbox, so they only move when a reading
+  // is saved or synced — never because the tab was tapped.
+  useRefreshOnChange(refresh);
 
   const report = state.status === "ready" ? state.data : null;
   const periods = useMemo(() => report?.periods ?? [], [report]);

@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { bumpCollectorData } from '@/collector/services/data-revision';
+
 export interface MeterReading {
   id: string;
   routeId: string;
@@ -58,6 +60,7 @@ export class OfflineStorage {
       const existing = await this.getMeterReadings();
       existing.push(reading);
       await AsyncStorage.setItem(STORAGE_KEYS.METER_READINGS, JSON.stringify(existing));
+      bumpCollectorData();
       
       // Add to sync queue
       await this.addToSyncQueue({
@@ -112,6 +115,7 @@ export class OfflineStorage {
         STORAGE_KEYS.METER_READINGS,
         JSON.stringify([...existing, ...additions])
       );
+      bumpCollectorData();
       return additions.length;
     } catch (error) {
       console.error('Error merging meter readings:', error);
@@ -126,6 +130,7 @@ export class OfflineStorage {
         r.id === id ? { ...r, synced: true } : r
       );
       await AsyncStorage.setItem(STORAGE_KEYS.METER_READINGS, JSON.stringify(updated));
+      bumpCollectorData();
     } catch (error) {
       console.error('Error marking meter reading synced:', error);
       throw error;
@@ -151,7 +156,8 @@ export class OfflineStorage {
       if (at === -1) existing.push(order);
       else existing[at] = order;
       await AsyncStorage.setItem(STORAGE_KEYS.SERVICE_ORDERS, JSON.stringify(existing));
-      
+      bumpCollectorData();
+
       // Add to sync queue
       await this.addToSyncQueue({
         type: 'service_order',
@@ -186,6 +192,7 @@ export class OfflineStorage {
         o.id === id ? { ...o, synced: true } : o
       );
       await AsyncStorage.setItem(STORAGE_KEYS.SERVICE_ORDERS, JSON.stringify(updated));
+      bumpCollectorData();
     } catch (error) {
       console.error('Error marking service order synced:', error);
       throw error;
@@ -258,6 +265,7 @@ export class OfflineStorage {
       await AsyncStorage.removeItem(STORAGE_KEYS.SERVICE_ORDERS);
       await AsyncStorage.removeItem(STORAGE_KEYS.SYNC_QUEUE);
       await AsyncStorage.removeItem(STORAGE_KEYS.LAST_SYNC);
+      bumpCollectorData();
     } catch (error) {
       console.error('Error clearing all data:', error);
       throw error;
