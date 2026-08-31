@@ -2,7 +2,7 @@ const Account = require('../models/Account');
 const AccountLinkRequest = require('../models/AccountLinkRequest');
 const Consumer = require('../models/Consumer');
 const Feedback = require('../models/Feedback');
-const MeterReading = require('../models/MeterReading');
+const Meter = require('../models/Meter');
 const ServiceConnection = require('../models/ServiceConnection');
 const httpError = require('../utils/httpError');
 const ErrorCodes = require('../utils/errorCodes');
@@ -10,6 +10,8 @@ const { balancesByConnection } = require('../utils/accountPaymentSummary');
 const { barangayOf, summarise } = require('../utils/barangay');
 const { displayName } = require('../utils/consumerIdentity');
 const { formatAddress } = require('../utils/address');
+const { previousReadingByAccount } = require('../utils/previousReading');
+const { currentZoneIds, zoneNames } = require('../utils/collectorZones');
 
 /**
  * GET /accounts — the caller's own water accounts.
@@ -111,24 +113,61 @@ const RATE_CLASS = {
 };
 
 /**
- * The most recent confirmed reading per account, in one round trip.
+ * `lastReadingByAccount` lived here and saw a quarter of the district's readings.
  *
- * `readingDate` first, `createdAt` second: two readings on the same calendar day
- * mean the meter was re-read to correct the first, and the correction is the one
- * this month's consumption must be measured from.
+ * It grouped `meterreadings` on `$accountNumber`, a field the portal's own reading
+ * documents do not have — they key on `connectionId` — so every portal reading fell
+ * into one `_id: null` bucket and was thrown away, and twenty of twenty-eight stops
+ * went out with `previousReading: 0`. Replaced by utils/previousReading.js, which
+ * reads all four places a reading is recorded. The full account is in that file.
  */
-async function lastReadingByAccount() {
-  const rows = await MeterReading.aggregate([
-    { $sort: { readingDate: -1, createdAt: -1 } },
-    {
-      $group: {
-        _id: '$accountNumber',
-        currentReading: { $first: '$currentReading' },
-        readingDate: { $first: '$readingDate' },
-      },
-    },
-  ]);
-  return new Map(rows.map((r) => [r._id, r]));
+
+/**
+ * The meter serial per connection, for the meters that have one.
+ *
+ * `meterNumber` was hard-coded to `''` behind a comment saying the portal's
+ * `meters` collection was empty. It is not empty any more — it holds installed
+ * meters carrying the serial stamped on the box the collector is standing at, which
+ * is the number they check before entering a reading against it.
+ *
+ * Removed meters are skipped rather than shown: a serial that is no longer on the
+ * wall is worse than no serial, because it reads as confirmation of the wrong box.
+ */
+async function meterSerialByConnection(connectionIds) {
+  const meters = await Meter.find({
+    connectionId: { $in: connectionIds },
+    removalDate: null,
+  })
+    .select('connectionId serialNo installDate')
+    .sort({ installDate: 1 })
+    .lean();
+
+  // Sorted ascending and assigned in order, so the newest installation wins where
+  // a connection has had more than one meter on it.
+  return new Map(
+    meters.filter((m) => m.serialNo).map((m) => [String(m.connectionId), m.serialNo])
+  );
+}
+
+/**
+ * The portal's connection state → the two-value status the route card renders.
+ *
+ * ⚠️ THIS USED TO READ `accounts`, WHICH HOLDS ZERO DOCUMENTS. Every stop therefore
+ * came back `status: 'active'`, including the closed connection and the two
+ * disconnected ones — and `status: 'inactive'` is precisely what raises "Account
+ * inactive — check with the office before reading" on the collector's card. The
+ * warning could never fire. A collector was being sent to climb to a meter box the
+ * district had already disconnected, with nothing on the screen to say so.
+ *
+ * Anything that is not an active connection is `inactive` here. That is the
+ * conservative direction: the card's warning says *check with the office*, which is
+ * the right instruction for a closed, disconnected or not-yet-installed meter, and
+ * `connectionStatus` still carries the portal's own word for the app to be more
+ * specific where it can be.
+ */
+function statusOf(connection, account) {
+  if (account && account.status) return account.status;
+  return connection.status === 'active' ? 'active' : 'inactive';
 }
 
 /**
@@ -155,17 +194,23 @@ async function lastReadingByAccount() {
  * not silently as an unreadable row on someone's walking list. A consumer with
  * several connections is several stops, which is correct: that is several meters.
  *
- * ⚠️ NOT SCOPED TO THE CALLER'S ROUTE, because nothing in this database can scope
- * it. `Collector.routeIds` holds route identifiers and neither the consumer nor
- * the connection carries a route assignment or a walk sequence — there is no join
- * to make, so every collector receives the full list and the app filters it by
- * barangay instead. That is the honest shape of the data today and it is the
- * reason this is Collector-gated rather than open: it is the district's customer
- * list, and it goes to field staff who already carry it on paper, to nobody else.
- * When the portal adds a route assignment, filter here on the routeIds of
- * `req.collectorScope.collectorId` — NOT `req.user.sub`, which is a
- * google_users._id for an allowlisted collector and matches no employee — and
- * this comment goes away.
+ * ✅ NOW SCOPED TO THE COLLECTOR'S OWN ZONE. This used to send every collector the
+ * district's entire customer list, under a note explaining that nothing in the
+ * database could scope it — `Collector.routeIds` is empty on every real employment
+ * record, so there was no join to make. The note was looking for the wrong word.
+ * The portal does not assign routes; it assigns ZONES, in `zoneassignments`, and
+ * every connection carries a `zoneId`. See utils/collectorZones.js.
+ *
+ * The fallback is deliberate and it is the important part: a collector with no
+ * current posting still gets the full list rather than an empty screen. An office
+ * that has not entered somebody's assignment yet is a clerical gap, and the cost of
+ * guessing wrong in that direction is a longer list — while guessing the other way
+ * strands a collector at 7am in front of a route screen that says nothing is
+ * assigned to them, which is indistinguishable from a broken app. The response says
+ * which of the two happened so the app can be honest about it on screen.
+ *
+ * Admin is unscoped, as everywhere else: reconciling the district's route is the
+ * job, and it is the one caller requireCollectorScope hands a null collectorId.
  *
  * `sequence` is derived — barangay, then account number — not surveyed. A real
  * walk order is a physical path through a barangay that only the district can
@@ -173,10 +218,11 @@ async function lastReadingByAccount() {
  * number you can call out) without pretending the order was optimised.
  */
 exports.listRoute = async (req, res) => {
-  const [consumers, lastReading] = await Promise.all([
-    Consumer.find({}).lean(),
-    lastReadingByAccount(),
-  ]);
+  const consumers = await Consumer.find({}).lean();
+
+  // Null for Admin, and for a collector the office has not posted to a zone yet.
+  // Both mean "no filter" — never "no access". Same rule as listRoute's readings.
+  const zoneIds = await currentZoneIds(req.collectorScope.collectorId);
 
   /**
    * `serviceconnections` is the portal's link between a person and a meter, and
@@ -186,6 +232,7 @@ exports.listRoute = async (req, res) => {
    */
   const connections = await ServiceConnection.find({
     consumerId: { $in: consumers.map((c) => c._id) },
+    ...(zoneIds ? { zoneId: { $in: zoneIds } } : {}),
   }).lean();
 
   // `accounts` is now a decoration, not the spine: it supplies the rate class and
@@ -196,10 +243,15 @@ exports.listRoute = async (req, res) => {
   const accountByNumber = new Map(accounts.map((a) => [a.accountNumber, a]));
   const consumerById = new Map(consumers.map((c) => [String(c._id), c]));
 
+  const [previousReadings, meterSerials] = await Promise.all([
+    previousReadingByAccount(connections),
+    meterSerialByConnection(connections.map((c) => c._id)),
+  ]);
+
   const rows = connections.map((connection) => {
     const holder = consumerById.get(String(connection.consumerId)) || null;
     const account = accountByNumber.get(connection.accountNo) || null;
-    const last = lastReading.get(connection.accountNo);
+    const last = previousReadings.get(connection.accountNo) || null;
     const serviceAddress = connection.serviceAddress || null;
 
     return {
@@ -236,22 +288,32 @@ exports.listRoute = async (req, res) => {
        * to read on it.
        */
       connectionStatus: connection.status || null,
-      // The `meters` collection exists in the portal and is empty, and nothing
-      // else stores a meter number. Sent as an empty string rather than omitted so
-      // the app renders "Not on file" instead of a blank row it cannot explain.
-      meterNumber: '',
-      previousReading: last ? last.currentReading : 0,
+      // The serial stamped on the box, where the portal has an installed meter for
+      // this connection. Empty string rather than omitted so the app renders "Not
+      // on file" instead of a blank row it cannot explain.
+      meterNumber: meterSerials.get(String(connection._id)) || '',
+      previousReading: last ? last.value : 0,
       /**
-       * Null means never read through this app. The 0 above is then a starting
-       * point, not a measurement, and the app must say so before billing against
-       * it — a first reading of 1250 against an assumed 0 bills the consumer for
-       * the entire life of the meter.
+       * The date of the reading `previousReading` came from — and null where that
+       * reading is period-based rather than dated, which is most of them: an
+       * opening reading and a bill's closing reading belong to a billing period,
+       * not to a day. `previousReadingPeriod` carries the period in that case, so
+       * the app can say where the figure came from without inventing a day.
+       *
+       * ⚠️ NULL NO LONGER MEANS "no previous reading". That is
+       * `previousReadingSource: null`, and it is the only thing the app may render
+       * as "None on file" — billing from an assumed zero is the failure this whole
+       * resolver exists to prevent, so the signal for it has to be the absence of
+       * a reading rather than the absence of a date.
        */
       lastReadingDate: last ? last.readingDate : null,
+      previousReadingPeriod: last ? last.period : null,
+      /** `app` | `portal` | `bill` | `opening`, or null when nothing has one. */
+      previousReadingSource: last ? last.source : null,
       rateClass:
         RATE_CLASS[account ? account.type : connection.accountType] || 'Residential',
       accountType: account ? account.type : connection.accountType,
-      status: account ? account.status : 'active',
+      status: statusOf(connection, account),
     };
   });
 
@@ -266,6 +328,15 @@ exports.listRoute = async (req, res) => {
   res.json({
     accounts: rows,
     barangays: summarise(rows),
+    /**
+     * Which slice of the district this is. The app shows the zone names when it is
+     * scoped, and says the list is unfiltered when it is not — a collector reading
+     * "28 accounts" needs to know whether that is their round or everybody's.
+     */
+    scope: {
+      zoneScoped: Boolean(zoneIds),
+      zones: await zoneNames(zoneIds),
+    },
     syncedAt: new Date().toISOString(),
   });
 };

@@ -54,6 +54,25 @@ const serviceConnectionSchema = new mongoose.Schema(
     serviceAddress: { type: serviceAddressSchema, default: undefined },
     zoneId: { type: mongoose.Schema.Types.ObjectId },
     dateConnected: { type: Date },
+    /**
+     * The meter reading at the START of each billing period, as the portal records
+     * it — `[{ period: '2026-07', reading: 985 }]`.
+     *
+     * Declared because utils/previousReading.js depends on it, and because it is
+     * the only reading source that covers every connection in the district: it is
+     * what stops twenty of twenty-eight stops reaching the collector's phone with
+     * a previous reading of zero. Reads happen through `.lean()`, which would
+     * return the field either way; it is written down here so the next person to
+     * touch this file knows the app relies on it.
+     *
+     * The opening of a period is the close of the one before it — the opening
+     * reading for 2026-06 and the closing reading on the 2026-05 bill are the same
+     * number, 959, in the live data. previousReading.js dates it accordingly.
+     */
+    openingReadings: {
+      type: [new mongoose.Schema({ period: String, reading: Number }, { _id: false })],
+      default: undefined,
+    },
   },
   { timestamps: true, collection: 'serviceconnections' }
 );

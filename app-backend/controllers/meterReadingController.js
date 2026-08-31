@@ -5,9 +5,13 @@ const calculateConsumption = require('../utils/calculateConsumption');
 // offline queue never creates duplicate readings.
 exports.sync = async (req, res) => {
   const consumption = calculateConsumption(req.body.previousReading, req.body.currentReading);
+  const period = MeterReading.periodOf(req.body.readingDate);
   const reading = await MeterReading.upsertFromClient({
     ...req.body,
     consumption,
+    // Derived here, never taken from the body: it is the key that decides which
+    // readings compete to be the one that stands for this meter-month.
+    period,
     // Trust the resolved collector, not the client. requireCollectorScope
     // turns EITHER identity system's token into the same collectors._id, so a
     // reading filed from a Google session is attributable to the same employee
@@ -21,7 +25,29 @@ exports.sync = async (req, res) => {
     // this preserves a path nothing exercises rather than inventing one.
     collectorId: req.collectorScope.collectorId ?? req.user.sub,
   });
-  res.json({ reading });
+
+  /**
+   * A re-read of the same meter in the same month is a CORRECTION, not a second
+   * bill — and until now it became one. The phone generates a fresh clientId for
+   * each reading (it must; they are separate records in its outbox), so the upsert
+   * above cannot tell a correction from a new fact. This asks the second question:
+   * of everything filed for this meter-month, which one stands?
+   *
+   * Runs after the upsert so the record being synced is part of the group it is
+   * resolved against, and recomputes the whole group rather than comparing pairs,
+   * so replays and out-of-order arrivals converge. See MeterReading.resolvePeriod.
+   */
+  const standing = await MeterReading.resolvePeriod(reading.accountNumber, period);
+
+  res.json({
+    reading,
+    /**
+     * Whether the reading just filed is the one that stands. False means the phone
+     * sent an older reading for a meter-month that has since been re-read — it is
+     * stored and auditable, but it is not what TWD bills from.
+     */
+    stands: !standing || String(standing._id) === String(reading._id),
+  });
 };
 
 /**

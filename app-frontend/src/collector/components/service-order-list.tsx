@@ -9,7 +9,7 @@ import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListError } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { SkeletonList } from '@/shared/components/skeleton';
-import { SyncBadge } from '@/shared/components/status-badge';
+import { ServiceOrderBadge, SyncBadge } from '@/shared/components/status-badge';
 import { formatPeso } from '@/shared/format/currency';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
@@ -23,6 +23,7 @@ const COPY = {
     emptyBody:
       'Reconnection orders assigned to you appear here, including while you are offline.',
     doneTitle: 'Reconnected today',
+    cancelledTitle: 'Cancelled by the office',
     balanceLabel: 'Settled',
     icon: 'file-check',
   },
@@ -32,6 +33,7 @@ const COPY = {
     emptyBody:
       'Disconnection orders authorised by the office appear here, including while you are offline.',
     doneTitle: 'Disconnected today',
+    cancelledTitle: 'Cancelled by the office',
     balanceLabel: 'Outstanding',
     icon: 'alert-triangle',
   },
@@ -87,7 +89,14 @@ export function ServiceOrderList({ kind }: { kind: NoticeKind }) {
   const snapshot = state.status === 'ready' ? state.data : null;
   const rows = snapshot?.rows ?? [];
   const pending = rows.filter((r) => r.state === 'pending');
-  const completed = rows.filter((r) => r.state !== 'pending');
+  const completed = rows.filter((r) => r.state === 'done' || r.state === 'pending-sync');
+  /**
+   * Withdrawn orders get their own section rather than joining the completed pile.
+   * They are neither done nor to do, and the one thing a collector must not read
+   * them as is work — which is exactly what they looked like before, sitting
+   * untitled among the pending rows with a chevron on them.
+   */
+  const cancelled = rows.filter((r) => r.state === 'cancelled');
 
   const open = (order: ServiceOrderRow) =>
     router.push(`/collector/reading-reports/${copy.route}/${order.id}`);
@@ -154,6 +163,20 @@ export function ServiceOrderList({ kind }: { kind: NoticeKind }) {
           ))}
         </ScreenSection>
       )}
+
+      {cancelled.length > 0 && (
+        <ScreenSection gap={Spacing.three}>
+          <ThemedText type="defaultBold">{copy.cancelledTitle}</ThemedText>
+          {cancelled.map((order) => (
+            <OrderRow
+              key={order.id}
+              order={order}
+              balanceLabel={copy.balanceLabel}
+              onPress={() => open(order)}
+            />
+          ))}
+        </ScreenSection>
+      )}
     </ScreenContainer>
   );
 }
@@ -207,13 +230,21 @@ function OrderRow({
 }) {
   const theme = useTwdTheme();
   /**
-   * Undefined is not zero. Nothing issues these figures yet — the district's `bills`
-   * collection is empty — and `formatPeso(undefined)` would print ₱0.00, which on a
-   * disconnection card states that the consumer owes nothing. The row is dropped
-   * instead, and comes back on its own the day an order carries a balance.
+   * Each kind reads its OWN figure — never the other's.
+   *
+   * This was `settledAmount ?? outstandingBalance`, which was safe only while
+   * nothing populated either. Now that the server attaches a real outstanding
+   * balance, that fallback would render it on a reconnection card under the label
+   * "Settled" — telling a collector that a household who has just paid settled the
+   * amount they still owe. A reconnection shows what was settled or it shows
+   * nothing.
+   *
+   * Undefined is still not zero: `formatPeso(undefined)` prints ₱0.00, which on a
+   * disconnection card is a statement that the consumer owes nothing. The row is
+   * dropped instead.
    */
-  const amount = order.settledAmount ?? order.outstandingBalance;
   const settled = order.kind === 'reconnection';
+  const amount = settled ? order.settledAmount : order.outstandingBalance;
 
   return (
     <Pressable
@@ -223,7 +254,11 @@ function OrderRow({
         amount === undefined ? '' : ` ${balanceLabel} ${formatPeso(amount)}.`
       } Order ${order.id}.`}
       accessibilityHint={
-        order.state === 'pending' ? 'Opens confirmation for this order' : 'Opens this completed order'
+        order.state === 'pending'
+          ? 'Opens confirmation for this order'
+          : order.state === 'cancelled'
+            ? 'Opens this cancelled order'
+            : 'Opens this completed order'
       }
       style={({ pressed }) => [
         styles.card,
@@ -243,6 +278,8 @@ function OrderRow({
         </View>
         {order.state === 'pending' ? (
           <Icon name="chevron-right" size={20} color={theme.textSecondary} />
+        ) : order.state === 'cancelled' ? (
+          <ServiceOrderBadge status="cancelled" />
         ) : (
           <SyncBadge status={order.state === 'done' ? 'synced' : 'pending'} />
         )}

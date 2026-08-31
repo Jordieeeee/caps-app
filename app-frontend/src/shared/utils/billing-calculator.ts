@@ -78,15 +78,34 @@ export interface RouteAccount {
   meterNumber: string;
   previousReading: number;
   /**
-   * `YYYY-MM-DD` of the reading `previousReading` came from, or null when this
-   * meter has never been read through the app.
+   * `YYYY-MM-DD` of the reading `previousReading` came from, where that reading
+   * has a date at all.
    *
-   * Null makes `previousReading: 0` readable for what it is — an absence, not a
-   * measurement. Billing a first reading of 1250 against an assumed 0 charges the
-   * consumer for the entire life of the meter, so the screen must be able to tell
-   * the two apart before it prints anything.
+   * ⚠️ NULL NO LONGER MEANS "never read" — use `previousReadingSource` for that.
+   * Most of the district's readings are period-based: an opening reading and a
+   * bill's closing reading belong to a billing period, not to a day, and the
+   * server sends null here rather than inventing one. Treating null as "no
+   * previous reading" would put "None on file" over a real reading of 944 and
+   * bill the household from zero, which is the exact failure this field was added
+   * to prevent.
    */
   lastReadingDate: string | null;
+  /**
+   * `YYYY-MM` the previous reading closes, for the sources that have no exact day.
+   * Lets the screen say "from the June 2026 period" instead of a fabricated date.
+   */
+  previousReadingPeriod?: string | null;
+  /**
+   * Where `previousReading` came from, or null when nothing anywhere has one —
+   * which is the only state that may be shown as "None on file", and the only one
+   * where billing measures from zero.
+   *
+   *   app      a reading this app filed
+   *   portal   an approved reading in the portal's own reading queue
+   *   bill     the closing reading of a non-void bill
+   *   opening  the connection's opening reading for a billing period
+   */
+  previousReadingSource?: 'app' | 'portal' | 'bill' | 'opening' | null;
   rateClass: RateClass;
   /** The district's own classification, as stored. Drives `rateClass`. */
   accountType?: 'residential' | 'commercial' | 'government';

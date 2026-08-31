@@ -71,6 +71,12 @@ export interface RouteSnapshot {
   barangays: BarangaySummary[];
   /** Epoch ms of the last successful pull. Null means this phone has never had one. */
   syncedAt: number | null;
+  /**
+   * Which zone's round this is, or undefined for a cache written before the server
+   * scoped routes at all. Undefined is rendered as nothing rather than as "all
+   * zones" — an old cache cannot answer the question either way.
+   */
+  scope?: RouteScope;
   /** True when the rows came off the cache because the network was not used or failed. */
   fromCache: boolean;
   /**
@@ -84,14 +90,31 @@ export interface RouteSnapshot {
   pullFailed: boolean;
 }
 
+/**
+ * Whose round this list is.
+ *
+ * `zoneScoped: false` is not a failure — it is Admin, or a collector the office has
+ * not posted to a zone yet, and the server sends the whole district rather than
+ * stranding them (see app-backend/utils/collectorZones.js). But the screen has to
+ * say which, because "28 accounts" means something completely different depending
+ * on the answer, and a collector should never be left assuming the district's entire
+ * customer list is their morning.
+ */
+export interface RouteScope {
+  zoneScoped: boolean;
+  zones: string[];
+}
+
 interface RouteResponse {
   accounts: RouteAccount[];
   barangays: BarangaySummary[];
+  scope?: RouteScope;
 }
 
 interface RouteCache {
   accounts: RouteAccount[];
   barangays: BarangaySummary[];
+  scope?: RouteScope;
 }
 
 /** Older installs cached a bare array, before barangays existed. */
@@ -101,6 +124,7 @@ function parseCache(raw: string): RouteCache {
   return {
     accounts: (parsed.accounts ?? []).map(normalise),
     barangays: parsed.barangays ?? [],
+    scope: parsed.scope,
   };
 }
 
@@ -126,6 +150,11 @@ function normalise(account: RouteAccount): RouteAccount {
     barangay: account.barangay || 'Unassigned',
     meterNumber: account.meterNumber ?? '',
     lastReadingDate: account.lastReadingDate ?? null,
+    // Absent from a cache written before the server resolved a reading source. The
+    // screens fall back to `lastReadingDate` when both are missing, so an old cache
+    // keeps behaving exactly as it did rather than claiming every stop is unread.
+    previousReadingPeriod: account.previousReadingPeriod ?? null,
+    previousReadingSource: account.previousReadingSource ?? null,
     status: account.status ?? 'active',
     connectionStatus: account.connectionStatus ?? null,
   };
@@ -154,8 +183,8 @@ export class RouteAccountService {
    * the phone" — which is a decision that needs to know the pull failed.
    */
   static async pull(): Promise<RouteCache> {
-    const { accounts, barangays } = await apiFetch<RouteResponse>('/accounts/route');
-    const cache: RouteCache = { accounts: accounts.map(normalise), barangays };
+    const { accounts, barangays, scope } = await apiFetch<RouteResponse>('/accounts/route');
+    const cache: RouteCache = { accounts: accounts.map(normalise), barangays, scope };
 
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
@@ -281,6 +310,7 @@ export class RouteAccountService {
       // Falls back to a client-side count for a cache written before the server
       // sent a summary; the two agree, because both count the same list.
       barangays: cache.barangays.length ? cache.barangays : summarise(cache.accounts),
+      scope: cache.scope,
       syncedAt: fromCache ? before : await this.syncedAt(),
       fromCache,
       pullFailed,

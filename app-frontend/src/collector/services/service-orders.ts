@@ -46,8 +46,16 @@ const STALE_MS = 60 * 60 * 1000;
  * not know yet. That is a different fact from `done`, and on a disconnection it is
  * the difference between "the office can tell the consumer why their water is off"
  * and "the office cannot".
+ *
+ * `cancelled` is the office withdrawing an order it already raised, and it used to
+ * have no state at all here — a cancelled order fell through to `pending`, sat in
+ * the list looking like work, counted towards "2 waiting" on the Route screen, and
+ * confirming it posted a completion that flipped the withdrawal back to `completed`
+ * on the server. On a disconnection that is a collector shutting off a household the
+ * office had just decided to spare, with nothing left in the record to show the
+ * order had been called off.
  */
-export type ServiceOrderState = 'pending' | 'pending-sync' | 'done';
+export type ServiceOrderState = 'pending' | 'pending-sync' | 'done' | 'cancelled';
 
 export interface ServiceOrderRow {
   /** The office's order reference. Also the sync key — see `confirm`. */
@@ -70,6 +78,8 @@ export interface ServiceOrderRow {
   state: ServiceOrderState;
   confirmedAt?: number;
   note?: string;
+  /** The local day the work was done, `YYYY-MM-DD`. Absent until it is. */
+  completionDate?: string;
 }
 
 /**
@@ -99,6 +109,7 @@ interface ServiceOrderDto {
   accountAddress?: string;
   reason?: string;
   status?: 'pending' | 'completed' | 'cancelled';
+  completionDate?: string;
   outstandingBalance?: number;
   settledAmount?: number;
   settledDate?: string;
@@ -218,16 +229,40 @@ export class ServiceOrderService {
             state: done.synced ? 'done' : 'pending-sync',
             confirmedAt: done.timestamp,
             note: done.fieldVerification,
+            completionDate: done.completionDate,
           };
         }
+
+        // Withdrawn by the office. Checked before `completed` and after this
+        // phone's own record: a cancellation outranks a pending order, and the work
+        // this collector has already done outranks the cancellation — the water is
+        // off either way, and hiding that from them would be the worse lie.
+        if (order.status === 'cancelled') return { ...base, state: 'cancelled' };
 
         // Completed at the office — by another collector, or by this one on a
         // handset that has since been wiped. Still done; there is nothing to
         // confirm a second time.
-        if (order.status === 'completed') return { ...base, state: 'done' };
+        if (order.status === 'completed') {
+          return { ...base, state: 'done', completionDate: order.completionDate };
+        }
 
         return { ...base, state: 'pending' };
-      });
+      })
+      /**
+       * Finished work ages off the list at midnight; unsent work never does.
+       *
+       * The completed section is headed "Disconnected today", and it was not: the
+       * endpoint returns every order the district has ever raised, with no date
+       * bound, so a slip printed in March still sat under today's heading and the
+       * list only ever grew. Scoping it to the local day is what makes the heading
+       * true — and it is also what finally clears REC-001, the last surviving
+       * fixture, off every handset without touching the database.
+       *
+       * `pending-sync` is deliberately exempt. A confirmation the phone has not
+       * managed to send is outstanding work no matter how old it is, and it is the
+       * one row a collector most needs to keep seeing.
+       */
+      .filter((row) => row.state !== 'done' || row.completionDate === localDateKey());
 
     return {
       rows,
@@ -266,7 +301,9 @@ export class ServiceOrderService {
 
     const counts: Record<NoticeKind, number> = { reconnection: 0, disconnection: 0 };
     for (const order of orders) {
-      if (order.status === 'completed') continue;
+      // Cancelled counts as nothing waiting, the same as completed. It is not work
+      // — and this row is what turns the Route screen's "2 waiting" amber.
+      if (order.status === 'completed' || order.status === 'cancelled') continue;
       if (completedLocally.has(order.clientId)) continue;
       if (order.type in counts) counts[order.type] += 1;
     }

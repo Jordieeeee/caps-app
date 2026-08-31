@@ -11,7 +11,7 @@ import { Icon } from '@/shared/components/icon';
 import { ListError } from '@/shared/components/list-states';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { SkeletonList } from '@/shared/components/skeleton';
-import { SyncBadge } from '@/shared/components/status-badge';
+import { ServiceOrderBadge, SyncBadge } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
 import { TwdTextField } from '@/shared/components/twd-text-field';
 import { formatPeso } from '@/shared/format/currency';
@@ -30,6 +30,9 @@ const COPY = {
     consequence: 'The consumer keeps this slip as proof their water was restored today.',
     doneHeadline: 'Service restored',
     notePlaceholder: 'Meter reading, condition of the service…',
+    cancelledHeadline: 'Reconnection cancelled',
+    cancelledBody:
+      'The office withdrew this order. Do not reconnect this service. If you have already reconnected it, tell the office.',
   },
   disconnection: {
     title: 'Confirm disconnection',
@@ -40,6 +43,9 @@ const COPY = {
       'The consumer keeps this slip. It tells them what they owe and that paying it restores service.',
     doneHeadline: 'Service disconnected',
     notePlaceholder: 'Meter locked, consumer notified, condition…',
+    cancelledHeadline: 'Disconnection cancelled',
+    cancelledBody:
+      'The office withdrew this order. Do not disconnect this service. If you have already disconnected it, tell the office so the water can be restored.',
   },
 } as const;
 
@@ -104,13 +110,26 @@ function ActionForm({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const alreadyDone = order.state !== 'pending';
   /**
-   * Undefined is not zero. No order carries a balance yet — the district's `bills`
-   * collection is empty — and printing ₱0.00 on a disconnection slip the consumer
-   * keeps would tell them, in writing, that they owe nothing.
+   * Three outcomes, not two.
+   *
+   * `alreadyDone` used to be `state !== 'pending'`, which quietly swept a cancelled
+   * order into the "confirmed" branch — a green tick and "Service disconnected" over
+   * an order the office had called off. Before that it was worse: cancelled orders
+   * reached this screen as `pending` and rendered the confirm button.
    */
-  const amount = order.settledAmount ?? order.outstandingBalance;
+  const cancelled = order.state === 'cancelled';
+  const alreadyDone = order.state === 'done' || order.state === 'pending-sync';
+  /**
+   * Each kind reads its OWN figure — see the note in service-order-list.tsx. A
+   * reconnection shows what was settled; a disconnection shows what is owed. The
+   * old `??` fallback would print an outstanding balance under "Settled" on a slip
+   * the consumer keeps.
+   *
+   * Undefined is still not zero: printing ₱0.00 on a disconnection slip tells the
+   * household in writing that they owe nothing.
+   */
+  const amount = kind === 'reconnection' ? order.settledAmount : order.outstandingBalance;
 
   const notice = useCallback(
     (confirmedAt: number) => ({
@@ -158,6 +177,7 @@ function ActionForm({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow 
           <ThemedText type="defaultBold" style={styles.consumerName} numberOfLines={2}>
             {order.consumerName}
           </ThemedText>
+          {cancelled && <ServiceOrderBadge status="cancelled" />}
           {alreadyDone && <SyncBadge status={order.state === 'done' ? 'synced' : 'pending'} />}
         </View>
         <ThemedText type="small" themeColor="textSecondary">
@@ -177,7 +197,33 @@ function ActionForm({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow 
         </ThemedView>
       </ScreenSection>
 
-      {alreadyDone ? (
+      {cancelled ? (
+        /**
+         * No confirm button, no note field, no reprint. There is nothing to record
+         * and nothing to hand over — the slip would state that work was authorised
+         * when it was withdrawn. The only action left is the phone call, so that is
+         * what the screen says.
+         */
+        <ScreenSection gap={Spacing.three}>
+          <View
+            style={[
+              styles.warning,
+              { borderColor: theme.danger, backgroundColor: theme.dangerSurface },
+            ]}
+            accessible
+            accessibilityRole="alert">
+            <Icon name="x" size={22} color={theme.danger} />
+            <View style={styles.doneText}>
+              <ThemedText type="defaultBold" style={{ color: theme.danger }}>
+                {copy.cancelledHeadline}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {copy.cancelledBody}
+              </ThemedText>
+            </View>
+          </View>
+        </ScreenSection>
+      ) : alreadyDone ? (
         <ScreenSection gap={Spacing.three}>
           <View
             style={[styles.done, { borderColor: theme.success, backgroundColor: theme.backgroundElement }]}

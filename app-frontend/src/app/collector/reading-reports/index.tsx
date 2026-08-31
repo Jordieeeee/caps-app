@@ -159,7 +159,23 @@ export default function RouteAccountsScreen() {
         title="Route"
         subtitle={
           snapshot && rows.length > 0
-            ? `${rows.length} accounts · ${snapshot.barangays.length} barangay${snapshot.barangays.length === 1 ? '' : 's'}`
+            ? [
+                `${rows.length} accounts · ${snapshot.barangays.length} barangay${snapshot.barangays.length === 1 ? '' : 's'}`,
+                /**
+                 * Whose round this is, when the server could say. A collector posted
+                 * to Zone 1 sees "Zone 1"; one the office has not posted yet sees
+                 * "All zones", which is the honest label for a list that is the
+                 * whole district rather than their own — it used to be everybody's
+                 * list with nothing on screen admitting it.
+                 */
+                snapshot.scope
+                  ? snapshot.scope.zoneScoped
+                    ? snapshot.scope.zones.join(', ')
+                    : 'All zones — no zone assigned to you'
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')
             : 'Your accounts, grouped by barangay'
         }
       />
@@ -441,7 +457,11 @@ function BarangayHeading({ name, count }: { name: string; count: number }) {
  */
 function AccountRow({ account, onPress }: { account: RouteAccountRow; onPress: () => void }) {
   const theme = useTwdTheme();
-  const neverRead = account.lastReadingDate === null;
+  // Nothing anywhere holds a reading for this meter. Not `lastReadingDate === null`
+  // — see the note in [id].tsx: most of the district's previous readings come from
+  // a billing period and carry no day, and reading that as "never read" announced
+  // "No previous reading on file" over a real reading of 944.
+  const neverRead = account.previousReadingSource == null && account.lastReadingDate === null;
 
   return (
     <Pressable

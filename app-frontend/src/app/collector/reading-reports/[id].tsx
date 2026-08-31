@@ -17,7 +17,7 @@ import { ReadingStateBadge } from '@/shared/components/status-badge';
 import { TwdButton } from '@/shared/components/twd-button';
 import { TwdTextField } from '@/shared/components/twd-text-field';
 import { formatPeso } from '@/shared/format/currency';
-import { localDateKey } from '@/shared/format/date';
+import { formatBillingPeriod, formatDate, localDateKey } from '@/shared/format/date';
 import { downloadReceipt } from '@/collector/services/document-service';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useDownload } from '@/shared/hooks/use-download';
@@ -108,8 +108,39 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
   // See localDateKey.
   const readingDate = localDateKey();
 
-  /** No reading has ever been filed for this meter — see the warning block below. */
-  const firstReading = account.lastReadingDate === null;
+  /**
+   * Nothing anywhere holds a reading for this meter — see the warning block below.
+   *
+   * ⚠️ NOT `lastReadingDate === null`, which is what this was and which is now
+   * true for most of the district. The server resolves a previous reading from
+   * four sources, and the three period-based ones (an opening reading, a bill's
+   * closing reading) carry a billing period rather than a day, so they send a null
+   * date with a real number attached. Reading that as "never read" put "None on
+   * file" over a reading of 944 and offered to bill the household from zero.
+   *
+   * The `lastReadingDate` clause survives for one reason: a route cached by an
+   * older build has no `previousReadingSource` at all, and without it every stop on
+   * that phone would claim to be unread until the next pull.
+   */
+  const firstReading =
+    account.previousReadingSource == null && account.lastReadingDate === null;
+
+  /**
+   * Where the previous reading came from, in the collector's words.
+   *
+   * A figure with no provenance is one the collector cannot argue with at the
+   * gate. "985 (June 2026 billing)" is checkable against the consumer's own bill;
+   * a bare 985 is not, and the ones that come from a billing period rather than
+   * from a visit are exactly the ones a household is most likely to query.
+   */
+  const readingSource =
+    account.previousReadingSource === 'app' || account.previousReadingSource === 'portal'
+      ? account.lastReadingDate
+        ? `Read ${formatDate(account.lastReadingDate)}`
+        : null
+      : account.previousReadingPeriod
+        ? `From ${formatBillingPeriod(account.previousReadingPeriod)} billing`
+        : null;
 
   const current = input.trim() === '' ? null : Number.parseInt(input, 10);
   const consumption = current === null ? null : current - account.previousReading;
@@ -243,6 +274,7 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
           <ReadOnlyRow
             label="Previous reading"
             value={firstReading ? 'None on file' : `${account.previousReading}`}
+            hint={firstReading ? undefined : readingSource ?? undefined}
           />
           <ReadOnlyRow label="Billing period" value={billingPeriodFor(readingDate)} />
           {/* Blank when TWD holds no meter number — the Account schema has no such
@@ -413,15 +445,26 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
   );
 }
 
-function ReadOnlyRow({ label, value }: { label: string; value: string }) {
+/**
+ * `hint` sits under the value in the secondary colour — provenance for a figure
+ * the collector may have to defend, never a second fact competing with the first.
+ */
+function ReadOnlyRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <View style={styles.row}>
       <ThemedText type="small" themeColor="textSecondary">
         {label}
       </ThemedText>
-      <ThemedText type="small" style={styles.rowValue} numberOfLines={1}>
-        {value}
-      </ThemedText>
+      <View style={styles.rowValue}>
+        <ThemedText type="small" style={styles.rowValueText} numberOfLines={1}>
+          {value}
+        </ThemedText>
+        {hint ? (
+          <ThemedText type="small" themeColor="textSecondary" style={styles.rowValueText} numberOfLines={1}>
+            {hint}
+          </ThemedText>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -455,7 +498,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.three,
   },
-  rowValue: { flex: 1, textAlign: 'right' },
+  // A column now: the value with its provenance underneath, both right-aligned
+  // against the label on the left.
+  rowValue: { flex: 1, alignItems: 'flex-end' },
+  rowValueText: { textAlign: 'right' },
   // Big, because it is read back against a meter face at arm's length. fontSize
   // and lineHeight declared together — see the note on TwdTextField's inputStyle.
   readingInput: { fontSize: 32, lineHeight: 40, fontWeight: '700' },

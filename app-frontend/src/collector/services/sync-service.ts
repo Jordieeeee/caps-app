@@ -335,6 +335,17 @@ export class SyncService {
             status: order.status,
             fieldVerification: order.fieldVerification,
             completionDate: order.completionDate,
+            /**
+             * When the collector stood at the gate, on their phone's clock.
+             *
+             * Same field and same omission as the readings above: `clientTimestamp`
+             * has been in the ServiceOrder schema all along and nothing sent it, so
+             * the district's only time for a disconnection was `completionDate` — a
+             * calendar day — plus `updatedAt`, which is the moment signal came back.
+             * On the one record a household may dispute, "which day" is a weaker
+             * answer than "which hour", and hours is what an offline round costs.
+             */
+            clientTimestamp: order.timestamp,
           }),
         });
         await OfflineStorage.markServiceOrderSynced(order.id);
