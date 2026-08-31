@@ -95,6 +95,23 @@ export default function RouteAccountsScreen() {
   const rows = useMemo(() => snapshot?.rows ?? [], [snapshot]);
 
   /**
+   * The barangay filter only exists when there is more than one barangay to choose
+   * between.
+   *
+   * A collector is posted to one barangay zone — "Boot – Zone 1" — so every stop on
+   * their route is in Boot, and the control offered them "All barangays 5" beside
+   * "Boot 5": two chips, one list, no choice. The one case where it still earns its
+   * place is the fallback for a collector the office has not posted, who receives
+   * the whole district; there the chips are how they narrow it. See
+   * app-backend/utils/collectorZones.js.
+   *
+   * The assigned barangay has not disappeared from the screen — it is in the header,
+   * which reads "5 accounts · 1 barangay · Boot – Zone 1".
+   */
+  const barangays = snapshot?.barangays ?? [];
+  const showBarangayFilter = barangays.length > 1;
+
+  /**
    * Status counts describe the barangay in view, not the district.
    *
    * "Unread 7" beside a barangay chip filtered to Darasa has to mean seven meters
@@ -102,8 +119,14 @@ export default function RouteAccountsScreen() {
    * for four accounts that are eleven kilometres away.
    */
   const inBarangay = useMemo(
-    () => (barangayFilter ? rows.filter((r) => r.barangay === barangayFilter) : rows),
-    [rows, barangayFilter]
+    // The filter is ignored while its control is hidden: a stale selection left over
+    // from a wider route must not silently subtract rows from a list that no longer
+    // offers any way to see it is filtered.
+    () =>
+      showBarangayFilter && barangayFilter
+        ? rows.filter((r) => r.barangay === barangayFilter)
+        : rows,
+    [rows, barangayFilter, showBarangayFilter]
   );
 
   const counts = useMemo(
@@ -223,19 +246,21 @@ export default function RouteAccountsScreen() {
 
       {snapshot && rows.length > 0 && (
         <ScreenSection gap={Spacing.three}>
-          <FilterChips
-            title="Barangay"
-            chips={snapshot.barangays.map((b) => ({
-              id: b.name,
-              label: b.name,
-              count: b.count,
-            }))}
-            selectedId={barangayFilter}
-            onSelect={setBarangayFilter}
-            allLabel="All barangays"
-            allCount={rows.length}
-            accessibilityLabel="Filter route by barangay"
-          />
+          {showBarangayFilter && (
+            <FilterChips
+              title="Barangay"
+              chips={barangays.map((b) => ({
+                id: b.name,
+                label: b.name,
+                count: b.count,
+              }))}
+              selectedId={barangayFilter}
+              onSelect={setBarangayFilter}
+              allLabel="All barangays"
+              allCount={rows.length}
+              accessibilityLabel="Filter route by barangay"
+            />
+          )}
 
           <FilterChips
             title="Reading status"

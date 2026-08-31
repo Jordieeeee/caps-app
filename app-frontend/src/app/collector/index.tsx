@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
-import { useCallback } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { AppState, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -28,19 +28,88 @@ import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
  * "Record a reading" stays the one filled button on the screen. Everything above
  * it is status — glanceable, never competing — and the second CTA stays outlined.
  */
+/**
+ * "Sunday, 31 August 2026 · 11:20 PM" — the wall clock, live.
+ *
+ * Local, never UTC: this is the date on the wall in Tanauan, and it is the same day
+ * a reading is stamped with (see localDateKey). A collector glancing at Home and at
+ * a receipt they just printed must not see two different dates.
+ *
+ * Ticks every second but only re-renders when the rendered STRING changes, so the
+ * screen repaints once a minute rather than sixty times. Seconds are deliberately
+ * absent — nobody reads a meter to the second, and a digit flickering under the
+ * greeting draws the eye away from the counts, which are the point of this screen.
+ *
+ * `AppState` matters more than the interval does. A phone in a bag has its timers
+ * throttled or stopped, so a collector reopening the app at 4pm would otherwise be
+ * looking at the time they last put it away. Re-reading the clock on foreground is
+ * what keeps it from quietly going stale.
+ */
+function stamp(date: Date): string {
+  const day = date.toLocaleDateString(undefined, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${day} · ${time}`;
+}
+
+function LiveDateTime() {
+  const [text, setText] = useState(() => stamp(new Date()));
+
+  useEffect(() => {
+    const tick = () => setText((previous) => {
+      const next = stamp(new Date());
+      return next === previous ? previous : next;
+    });
+
+    const interval = setInterval(tick, 1000);
+    const subscription = AppState.addEventListener('change', (status) => {
+      if (status === 'active') tick();
+    });
+
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
+  }, []);
+
+  return (
+    <ThemedText type="small" themeColor="textSecondary" accessibilityRole="text">
+      {text}
+    </ThemedText>
+  );
+}
+
 export default function CollectorHome() {
   const { collector, sync } = useCollectorIdentity();
   const router = useRouter();
   const theme = useTwdTheme();
   const { state, reload, refresh, refreshing } = useAsync(useCallback(() => loadToday(), []));
 
-  const routes = collector.routeIds;
+  /**
+   * The round this collector actually walks is their barangay zone, not a routeId.
+   *
+   * ⚠️ THIS CARD USED TO READ `routeIds[0]` AND SAY "R-01". Nothing in the district
+   * resolves R-01 to a household — the Route tab filters on the collector's zone
+   * (app-backend/utils/collectorZones.js), so Home was naming one thing while the
+   * Route screen listed the stops of another. Two answers to "where am I working
+   * today", and the one printed largest was the one that decided nothing.
+   *
+   * `routeIds` still exists on the employment and is still stamped on each reading,
+   * so it is not removed — it just stops being presented as the assignment.
+   */
+  const zone = collector.zone;
 
   return (
     <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
       <ScreenHeader title={firstName(collector.name)} subtitle={greeting()} />
 
       <ScreenSection gap={Spacing.three}>
+        <LiveDateTime />
+
         <ThemedView type="backgroundElement" style={styles.routeCard}>
           <View style={styles.routeHeader}>
             {/* The same Lucide `gauge` the Readings tab and Sync rows use — a dial,
@@ -49,11 +118,12 @@ export default function CollectorHome() {
             <ThemedText type="defaultBold">Today&apos;s route</ThemedText>
           </View>
           <ThemedText style={styles.routeName} numberOfLines={2}>
-            {routes.length ? routes.join(', ') : 'No route assigned'}
+            {zone ?? 'No zone assigned'}
           </ThemedText>
-          {!routes.length && (
+          {zone === null && (
             <ThemedText type="small" themeColor="textSecondary">
-              Contact the TWD office to have a route assigned to your account.
+              You are seeing every account in the district. Contact the TWD office to
+              have a barangay zone assigned to your account.
             </ThemedText>
           )}
         </ThemedView>

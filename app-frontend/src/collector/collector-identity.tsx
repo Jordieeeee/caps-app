@@ -45,6 +45,23 @@ export interface CollectorIdentity {
   name: string;
   email: string;
   employeeId: string | null;
+  /**
+   * The barangay zone this collector is posted to — "Boot – Zone 1" — or null when
+   * the office has not posted them.
+   *
+   * ⚠️ THIS, NOT `routeIds`, IS THE ROUND THEY WALK. The route list is filtered on
+   * the collector's `zoneId` (app-backend/utils/collectorZones.js); nothing anywhere
+   * resolves a `routeIds` entry to a household. Home printed "Today's route: R-01"
+   * from `routeIds[0]` while the Route tab showed Boot – Zone 1's five stops — two
+   * different answers to the same question, and only one of them decided which gates
+   * the collector was sent to.
+   */
+  zone: string | null;
+  /**
+   * Legacy route identifiers from the employment record. Kept because the Account
+   * screen still displays them and readings are stamped with one, but they map to
+   * nothing: see `zone` above.
+   */
   routeIds: string[];
 }
 
@@ -83,6 +100,7 @@ function fromProfile(profile: CollectorProfile, fallbackEmail: string): Collecto
     name: profile.name ?? nameFromEmail(email),
     email,
     employeeId: profile.employeeId,
+    zone: profile.zone,
     routeIds: profile.routeIds,
   };
 }
@@ -166,6 +184,10 @@ export function CollectorIdentityProvider({ children }: { children: ReactNode })
           name: passwordUser.name || nameFromEmail(passwordUser.email),
           email: passwordUser.email,
           employeeId: passwordUser.employeeId ?? null,
+          // The login response carries no zone — only the profile endpoint resolves
+          // one. Null until that lands, and Home renders the neutral case rather
+          // than briefly claiming a posting this session cannot yet know.
+          zone: null,
           routeIds: passwordUser.routeIds ?? [],
         },
         sync: state.status === 'signedIn' ? state.sync : 'online',

@@ -50,6 +50,25 @@ export function TwdButton({
 }: TwdButtonProps) {
   const theme = useTwdTheme();
   const inert = disabled || busy;
+
+  /**
+   * Disabled and busy look different, because they mean different things.
+   *
+   * ⚠️ THE ONLY DISABLED TREATMENT USED TO BE `opacity: 0.5`, and on a filled
+   * primary button that is not enough: a half-opacity brand fill on a dark ground
+   * still reads as a live control. "Submit to Admin" was correctly unpressable once
+   * everything had synced, and still looked exactly like a button somebody should
+   * press — so a collector taps it, nothing happens, and the screen has told them
+   * nothing about why.
+   *
+   * A disabled button keeps its colour and goes DARK: the same blue, dimmed to the
+   * pressed shade. It stays recognisably the same control — this is the button that
+   * submits, and turning it grey would make it look like a different thing — while
+   * being visibly spent. Busy keeps the full fill on purpose: the button is working,
+   * and dimming mid-submit would read as the action having been cancelled.
+   */
+  const off = disabled && !busy;
+
   // The accent an outline variant draws itself in. `primary` ignores this — it is
   // filled, and its label sits on the fill.
   const accent = variant === 'danger' ? theme.danger : theme.primary;
@@ -72,13 +91,18 @@ export function TwdButton({
               {
                 backgroundColor:
                   variant === 'primary'
-                    ? pressed && !inert
+                    ? // Same blue throughout: the darker pressed shade when the
+                      // button is spent, and when it is being pressed.
+                      off || (pressed && !inert)
                       ? theme.primaryPressed
                       : theme.primary
                     : 'transparent',
                 borderColor: variant === 'primary' ? 'transparent' : accent,
                 borderWidth: variant === 'primary' ? 0 : 2,
-                opacity: inert ? 0.5 : 1,
+                // A filled primary is already dark when off, so it only needs a
+                // little help; an outline button has no fill to darken and relies on
+                // the fade entirely.
+                opacity: busy ? 0.5 : off ? (variant === 'primary' ? 0.7 : 0.5) : 1,
               },
             ]}>
             {busy ? (

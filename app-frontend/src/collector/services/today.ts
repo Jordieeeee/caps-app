@@ -54,11 +54,31 @@ export async function loadToday(now: Date = new Date()): Promise<TodaySummary> {
 
   const todayReadings = readings.filter((r) => r.readingDate === key);
 
+  /**
+   * `accountsRead` is the denominator's own accounts — never every meter read today.
+   *
+   * ⚠️ IT USED TO COUNT BOTH, AND THE SUBTRACTION LIED. Home renders "Left to read"
+   * as `routeTotal - accountsRead`, so a reading filed today against an account that
+   * is NOT on the current route still decremented the number of stops remaining. A
+   * collector reassigned to a different zone mid-day saw "2 of 5 left" on Home while
+   * the Route tab correctly listed all five as Unread — the dashboard quietly
+   * subtracting work that had never been done on this round.
+   *
+   * That is not a rare edge: it happens on the day of any transfer, and it happens
+   * to every collector whose posting the office moves. Intersecting with the cached
+   * route is the same join the Route screen already performs to decide which stops
+   * show "Done", so the two screens can no longer disagree.
+   */
+  const onRoute = new Set(route.map((account) => account.accountNumber));
+  const readOnRoute = new Set(
+    todayReadings.map((r) => r.accountNumber).filter((accountNumber) => onRoute.has(accountNumber))
+  );
+
   return {
     readingsToday: todayReadings.length,
     // Distinct accounts: re-reading a meter to correct it writes a second record,
     // and it would be wrong to tell someone they have read 15 of 12 accounts.
-    accountsRead: new Set(todayReadings.map((r) => r.accountNumber)).size,
+    accountsRead: readOnRoute.size,
     routeTotal: route.length,
     sync,
   };

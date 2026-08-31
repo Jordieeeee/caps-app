@@ -37,7 +37,15 @@ async function main() {
   await mongoose.connect(process.env.MONGO_URI);
 
   const [zones, assignments, connections, employments, people] = await Promise.all([
-    Zone.find({}).lean(),
+    /**
+     * Active zones only. A retired zone (`isActive: false`) is one the district has
+     * taken out of service — the nine district-wide zones superseded by the
+     * barangay-scoped ones are the example. They are kept rather than deleted
+     * because fifty-six ended postings still reference them, and that is the
+     * district's record of who used to walk where; reporting them as "no collector"
+     * would be flagging a problem in history nobody can fix.
+     */
+    Zone.find({ isActive: { $ne: false } }).lean(),
     ZoneAssignment.find({ status: 'current' }).lean(),
     ServiceConnection.find({}).select('accountNo zoneId serviceAddress').lean(),
     Employment.find({}).lean(),
@@ -100,12 +108,25 @@ async function main() {
     problems.push(`${nameOfEmployment(employment)} holds ${zoneIds.length} zones`);
   }
 
-  heading('Collectors with no zone (they receive the whole district)');
+  /**
+   * A NOTE, NOT A PROBLEM. The district's rule is one collector per zone — it is not
+   * that every collector holds one. A district with more staff than zones has
+   * spares, which is ordinary, and counting each of them as a fault made the exit
+   * code useless: it could never reach zero while anyone was between postings.
+   *
+   * Still listed, because it is not nothing: an unposted collector who signs in gets
+   * the whole district by design (utils/collectorZones.js returns null, and the app
+   * says "All zones — no zone assigned to you"). Worth seeing; not worth failing on.
+   */
+  heading('Collectors with no zone — a note, not a fault');
   const unposted = employments.filter((e) => !zonesByCollector.has(String(e._id)));
-  if (unposted.length === 0) console.log('  none');
-  for (const employment of unposted) {
-    console.log(`  ${nameOfEmployment(employment._id)}`);
-    problems.push(`${nameOfEmployment(employment._id)} has no zone`);
+  console.log(
+    unposted.length === 0
+      ? '  none'
+      : `  ${unposted.length} spare collector(s); each would receive the whole district if they signed in.`
+  );
+  if (unposted.length > 0 && process.argv.includes('--verbose')) {
+    for (const employment of unposted) console.log(`    ${nameOfEmployment(employment._id)}`);
   }
 
   heading('Households in a zone nobody is posted to');
