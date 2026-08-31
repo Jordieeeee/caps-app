@@ -306,6 +306,23 @@ function OrderRow({
           </ThemedText>
           <ThemedText type="small">{order.id}</ThemedText>
         </View>
+        {/* The eligibility fact, where the district's bills can supply one. Only on
+            pending rows — on completed work it is history, and the card is already
+            carrying a badge, an address and a balance. */}
+        {order.state === 'pending' && order.settled !== null && order.settled !== undefined && (
+          <View style={styles.footerItem}>
+            <ThemedText type="small" themeColor="textSecondary">
+              Account
+            </ThemedText>
+            <ThemedText
+              type="small"
+              style={{ color: order.settled ? theme.success : theme.textSecondary }}>
+              {order.settled
+                ? 'Settled'
+                : `${order.unpaidBillCount ?? 0} unpaid${(order.daysPastDue ?? 0) > 0 ? ` · ${order.daysPastDue}d late` : ''}`}
+            </ThemedText>
+          </View>
+        )}
       </View>
     </Pressable>
   );

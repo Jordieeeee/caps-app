@@ -75,6 +75,26 @@ export interface ServiceOrderRow {
   outstandingBalance?: number;
   settledAmount?: number;
   settledDate?: string;
+  /**
+   * Whether the household qualifies for the work, from the portal's bills.
+   *
+   * ⚠️ `null` IS NOT `true`. It means the connection has no bills at all — twenty of
+   * the district's twenty-eight are in exactly that position — and it must never be
+   * rendered as "settled". An account nothing was ever billed against has not paid
+   * anything off; the screens say "No bills on file" and let the collector judge.
+   */
+  settled?: boolean | null;
+  unpaidBillCount?: number;
+  /** Days past the oldest unpaid bill's due date. 0 means nothing is overdue. */
+  daysPastDue?: number;
+  /**
+   * The staff member who approved this order, or null when nobody is recorded.
+   *
+   * Null on a disconnection is worth showing rather than hiding: the requirement is
+   * "authorized disconnect orders", and an order with no recorded authoriser is the
+   * case that matters. Today that is every order, because nothing writes it yet.
+   */
+  authorisedBy?: string | null;
   state: ServiceOrderState;
   confirmedAt?: number;
   note?: string;
@@ -110,6 +130,10 @@ interface ServiceOrderDto {
   reason?: string;
   status?: 'pending' | 'completed' | 'cancelled';
   completionDate?: string;
+  settled?: boolean | null;
+  unpaidBillCount?: number;
+  daysPastDue?: number;
+  authorisedBy?: string | null;
   outstandingBalance?: number;
   settledAmount?: number;
   settledDate?: string;
@@ -137,6 +161,12 @@ function normalise(order: ServiceOrderDto): Omit<ServiceOrderRow, 'state'> {
     outstandingBalance: order.outstandingBalance,
     settledAmount: order.settledAmount,
     settledDate: order.settledDate,
+    // `?? null` rather than `?? false`: an order cached by an older build carries no
+    // answer, and "unknown" is not "not settled".
+    settled: order.settled ?? null,
+    unpaidBillCount: order.unpaidBillCount ?? 0,
+    daysPastDue: order.daysPastDue ?? 0,
+    authorisedBy: order.authorisedBy ?? null,
   };
 }
 

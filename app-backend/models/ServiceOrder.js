@@ -23,6 +23,23 @@ const serviceOrderSchema = new mongoose.Schema(
      * printed slip carried the collector's name; the district's own copy did not.
      */
     completedBy: { type: String },
+    /**
+     * Which staff member authorised the order, as a `users._id`.
+     *
+     * ⚠️ WRITTEN BY THE PORTAL, NEVER BY THIS BACKEND OR BY A HANDSET. The sync
+     * endpoint strips it from the request body before upserting — a phone that could
+     * name its own authoriser would make the field worthless, which is the same
+     * reason `completedBy` is taken from the auth token instead of the payload.
+     *
+     * The requirement is "authorized disconnect orders", and until this existed
+     * nothing recorded an authorisation at all: an order named the collector who
+     * carried it out and nobody who approved it. If a household disputes a
+     * disconnection six months later, that is the missing half of the record.
+     *
+     * Same shape the portal already uses for this — `connectionstatushistories`
+     * stamps `changedBy` with a `users._id` — so the join needs no translation.
+     */
+    authorisedBy: { type: String },
   },
   { timestamps: true }
 );

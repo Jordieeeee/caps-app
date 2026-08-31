@@ -4,6 +4,8 @@ const ServiceConnection = require('../models/ServiceConnection');
 const { displayName } = require('../utils/consumerIdentity');
 const { formatAddress } = require('../utils/address');
 const { balancesByConnection } = require('../utils/accountPaymentSummary');
+const { eligibilityByConnection } = require('../utils/billingEligibility');
+const User = require('../models/User');
 
 /**
  * Idempotent sync endpoint keyed on the client-generated id.
@@ -18,12 +20,46 @@ const { balancesByConnection } = require('../utils/accountPaymentSummary');
  * collectorId so `list` below stays unfiltered for them.
  */
 exports.sync = async (req, res) => {
+  /**
+   * A handset may report what it DID, never who allowed it.
+   *
+   * `authorisedBy` is the portal's field and the only record of who approved
+   * shutting off a household's water. Spreading `req.body` straight into the upsert
+   * would let any authenticated collector — or a replayed queue from a tampered
+   * build — name their own authoriser, which would make the field worse than absent:
+   * a record that looks authorised and is not. Stripped here rather than ignored in
+   * the model, so the rule sits next to the one it mirrors immediately below.
+   */
+  const { authorisedBy, completedBy, ...fromClient } = req.body;
+
   const order = await ServiceOrder.upsertFromClient({
-    ...req.body,
+    ...fromClient,
     completedBy: req.collectorScope.collectorId ?? req.user.sub,
   });
   res.json({ order });
 };
+
+/**
+ * Staff id → the name a collector can repeat down the phone.
+ *
+ * An ObjectId on a disconnection card is not an authorisation anybody can check.
+ * `users` is where the portal's staff live — the same collection
+ * `connectionstatushistories.changedBy` points at. Read with `.lean()` because the
+ * User schema in this repo declares `role` as an enum of exactly ['Admin'] while the
+ * live documents carry `general_manager`; lean skips hydration, so a role this
+ * backend has never heard of cannot break a route it has no business validating.
+ */
+async function authorisers(ids) {
+  const unique = [...new Set(ids.filter(Boolean).map(String))];
+  if (unique.length === 0) return new Map();
+
+  const staff = await User.find({ _id: { $in: unique } })
+    .select('name email')
+    .lean()
+    .catch(() => []);
+
+  return new Map(staff.map((u) => [String(u._id), u.name || u.email || null]));
+}
 
 /**
  * Who lives at each of these accounts, in one round trip.
@@ -66,18 +102,25 @@ async function identify(accountNumbers) {
    * present, so an unattributable balance shows nothing instead of a wrong peso
    * amount on a notice somebody keeps.
    */
-  const balances = await balancesByConnection(connections);
+  const [balances, eligibility] = await Promise.all([
+    balancesByConnection(connections),
+    eligibilityByConnection(connections),
+  ]);
 
   return new Map(
     connections.map((connection) => {
       const holder = consumerById.get(String(connection.consumerId)) || null;
       const balance = balances.get(String(connection._id));
+      const standing = eligibility.get(String(connection._id));
       return [
         connection.accountNo,
         {
           consumerName: displayName(holder) || '',
           address: formatAddress(connection.serviceAddress),
           outstanding: balance && typeof balance.outstanding === 'number' ? balance.outstanding : null,
+          settled: standing ? standing.settled : null,
+          unpaidBillCount: standing ? standing.unpaidBillCount : 0,
+          daysPastDue: standing ? standing.daysPastDue : 0,
         },
       ];
     })
@@ -108,9 +151,10 @@ exports.list = async (req, res) => {
   if (req.query.status) filter.status = req.query.status;
 
   const orders = await ServiceOrder.listByFilter(filter).lean();
-  const identities = await identify(
-    [...new Set(orders.map((o) => o.accountNumber).filter(Boolean))]
-  );
+  const [identities, staff] = await Promise.all([
+    identify([...new Set(orders.map((o) => o.accountNumber).filter(Boolean))]),
+    authorisers(orders.map((o) => o.authorisedBy)),
+  ]);
 
   res.json({
     orders: orders.map((order) => {
@@ -138,6 +182,21 @@ exports.list = async (req, res) => {
           order.type === 'disconnection' && order.outstandingBalance == null
             ? who && who.outstanding
             : order.outstandingBalance,
+        /**
+         * Whether the household qualifies, sent for BOTH kinds.
+         *
+         * Unlike the peso figure above, none of these can be mislabelled by the
+         * wrong screen: "settled" and "two unpaid bills" mean the same thing on a
+         * reconnection and a disconnection, and each flow renders the half it cares
+         * about. `settled: null` is a real answer — no bills at all — and the app is
+         * required to render it as such rather than as "settled".
+         */
+        settled: who ? who.settled : null,
+        unpaidBillCount: who ? who.unpaidBillCount : 0,
+        daysPastDue: who ? who.daysPastDue : 0,
+        /** The staff member who approved it, resolved to a name. Null when the
+            portal has not recorded one — which is every order today. */
+        authorisedBy: order.authorisedBy ? staff.get(String(order.authorisedBy)) || null : null,
       };
     }),
   });

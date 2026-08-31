@@ -194,7 +194,16 @@ function ActionForm({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow 
           {amount !== undefined && <Row label={copy.balanceLabel} value={formatPeso(amount)} />}
           {order.settledDate && <Row label="Settled on" value={order.settledDate} />}
           <Row label="Reason" value={order.reason} />
+          {/* Who approved the work. Shown as an explicit absence on a
+              disconnection rather than omitted — see ServiceOrderRow.authorisedBy. */}
+          {order.authorisedBy ? (
+            <Row label="Authorised by" value={order.authorisedBy} />
+          ) : kind === 'disconnection' ? (
+            <Row label="Authorised by" value="Not recorded" />
+          ) : null}
         </ThemedView>
+
+        <Eligibility kind={kind} order={order} />
       </ScreenSection>
 
       {cancelled ? (
@@ -314,6 +323,60 @@ function ActionForm({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow 
         </>
       )}
     </>
+  );
+}
+
+/**
+ * What the district's bills say about this household, in one line.
+ *
+ * The requirements each name an eligibility condition — a reconnection is "for
+ * consumers with settled accounts", a disconnection is "for delinquent accounts" —
+ * and neither was answerable on this screen. The order was the only authority, so a
+ * collector could not tell whether it had been raised against an account that
+ * qualified.
+ *
+ * ⚠️ IT STATES, IT DOES NOT BLOCK. The office's order stays the authority: they may
+ * have grounds the billing data does not hold, which is demonstrably true in this
+ * district — the three households the office actually disconnected carry no balance
+ * at all. A collector stopped at a gate by an app that knows less than the office is
+ * worse off than one who is told and can phone in. Same treatment as the
+ * first-reading warning on the meter screen.
+ */
+function Eligibility({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow }) {
+  const theme = useTwdTheme();
+
+  const unpaid = order.unpaidBillCount ?? 0;
+  const overdue = order.daysPastDue ?? 0;
+
+  // Three states, and the middle one is "no bills on file" — never "settled".
+  const { text, color, icon } =
+    order.settled == null
+      ? {
+          text: 'No bills on file for this account.',
+          color: theme.textSecondary,
+          icon: 'info' as const,
+        }
+      : order.settled
+        ? {
+            text: 'Account settled — no unpaid bills.',
+            color: theme.success,
+            icon: 'check' as const,
+          }
+        : {
+            text:
+              `${unpaid} unpaid bill${unpaid === 1 ? '' : 's'}` +
+              (overdue > 0 ? ` · ${overdue} day${overdue === 1 ? '' : 's'} past due.` : ' · not past due yet.'),
+            color: kind === 'disconnection' ? theme.textSecondary : theme.warning,
+            icon: 'file-text' as const,
+          };
+
+  return (
+    <View style={styles.hint} accessible accessibilityRole="summary">
+      <Icon name={icon} size={14} color={color} />
+      <ThemedText type="small" style={{ color }}>
+        {text}
+      </ThemedText>
+    </View>
   );
 }
 
