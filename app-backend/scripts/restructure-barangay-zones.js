@@ -146,13 +146,22 @@ async function main() {
     return;
   }
 
-  const [connections, employments, people, currentAssignments, existingZones] = await Promise.all([
-    connCol.find({}).toArray(),
-    db.collection('employments').find({}).toArray(),
-    db.collection('collectorpersons').find({}).toArray(),
-    assignCol.find({ status: 'current' }).toArray(),
-    zonesCol.find({}).toArray(),
-  ]);
+  const [connections, employments, people, currentAssignments, existingZones, allowRows, credRows] =
+    await Promise.all([
+      connCol.find({}).toArray(),
+      db.collection('employments').find({}).toArray(),
+      db.collection('collectorpersons').find({}).toArray(),
+      assignCol.find({ status: 'current' }).toArray(),
+      zonesCol.find({}).toArray(),
+      db.collection('collector_allowlist').find({}).toArray(),
+      db.collection('mobilecredentials').find({}).toArray(),
+    ]);
+
+  // The two places a collector's ability to sign in is actually recorded.
+  const allowlisted = new Set(allowRows.map((r) => String(r.email || '').toLowerCase()));
+  const credentialed = new Set(
+    credRows.map((r) => String(r.identifier || r.email || '').toLowerCase())
+  );
 
   const concentrate = args.includes('--concentrate');
 
@@ -216,11 +225,31 @@ async function main() {
     );
   }
 
-  const withLogin = (employment) => {
+  /**
+   * Who gets the busiest zones: collectors who can actually sign in.
+   *
+   * ⚠️ "HAS AN EMAIL" IS NOT "CAN SIGN IN", and ranking on the former put the demo
+   * account at the mercy of array order. Most of this district's collectors carry a
+   * placeholder `collectorN@example.com` — an address that can never own a Google
+   * account, so those records cannot authenticate however plausible they look. A
+   * collector signs in only if their email is on the allowlist or has a mobile
+   * credential, so that is what this checks.
+   *
+   * It matters because the zones are handed out busiest-first: if a real login is
+   * ranked below twenty placeholders, the one person who can open the app gets a
+   * zone nobody wanted, or none at all.
+   */
+  const emailOf = (employment) => {
     const person = people.find((p) => String(p._id) === String(employment.personId));
-    return person && person.email ? person.email : null;
+    return person && person.email ? String(person.email).toLowerCase() : null;
   };
-  const ranked = [...employments].sort((a, b) => (withLogin(a) ? 0 : 1) - (withLogin(b) ? 0 : 1));
+  const canSignIn = (employment) => {
+    const email = emailOf(employment);
+    return Boolean(email && (allowlisted.has(email) || credentialed.has(email)));
+  };
+  const ranked = [...employments].sort(
+    (a, b) => (canSignIn(a) ? 0 : emailOf(a) ? 1 : 2) - (canSignIn(b) ? 0 : emailOf(b) ? 1 : 2)
+  );
 
   console.log('\nsummary');
   console.log(`  barangays with households ....... ${plan.length}`);
@@ -270,6 +299,27 @@ async function main() {
     }
   }
   console.log(`created/updated ${totalZones} zone(s)`);
+
+  /**
+   * Retire every zone this script does not own.
+   *
+   * ⚠️ THIS STEP EXISTS BECAUSE THE PORTAL PUTS THEM BACK. The nine district-wide
+   * zones were retired by hand after the first run; the portal reactivated all nine,
+   * created ten new households inside them, and re-posted a collector onto Zone 5 —
+   * so the district ended up running two zone systems at once and a collector's Home
+   * screen named a zone spanning two barangays. Retiring is part of the restructure,
+   * not a follow-up someone has to remember.
+   *
+   * `isActive: false`, never deleted: ended postings still reference these zones, and
+   * that is the district's own record of who used to walk where.
+   */
+  const retired = await zonesCol.updateMany(
+    { createdByScript: { $ne: 'restructure-barangay-zones' }, isActive: { $ne: false } },
+    { $set: { isActive: false, retiredAt: new Date(), retiredReason: 'Superseded by barangay-scoped zones' } }
+  );
+  if (retired.modifiedCount > 0) {
+    console.log(`retired ${retired.modifiedCount} non-barangay zone(s) — kept, not deleted`);
+  }
 
   // ---- place households -----------------------------------------------------
   let placed = 0;

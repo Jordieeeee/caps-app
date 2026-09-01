@@ -18,3 +18,8 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# Database snapshots written by scripts/restructure-barangay-zones.js and
+# scripts/post-one-collector-per-zone.js before they write. They contain every
+# household address in the district — a restore point, not source code.
+.backups/
