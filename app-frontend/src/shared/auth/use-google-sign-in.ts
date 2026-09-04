@@ -36,6 +36,26 @@ import type { GoogleSession, GoogleSignInFailure } from '@/shared/types/google-a
 
 const authConfig = googleAuthConfig();
 
+/**
+ * Coerce anything thrown inside start() into a failure the banner can render.
+ *
+ * Only `exchangeGoogleIdToken` throws the typed shape. `exchangeCodeAsync`
+ * throws expo-auth-session's `TokenError` (a plain Error — invalid_grant, a
+ * redirect_uri Google will not accept, a token endpoint that timed out), and a
+ * bare cast let that reach the banner as `failure.kind === undefined`. The copy
+ * maps are keyed by kind, so both lookups returned undefined and the screen
+ * showed an empty coloured box: a sign-in that failed silently, which is the
+ * one outcome this flow is supposed to make impossible. Anything untyped is
+ * 'provider' — everything reaching here past the network guard in the client
+ * came from Google's side of the exchange.
+ */
+function asFailure(error: unknown): GoogleSignInFailure {
+  const kind = (error as Partial<GoogleSignInFailure> | null)?.kind;
+  if (kind && kind in GOOGLE_FAILURE_TITLES) return error as GoogleSignInFailure;
+  console.warn('[google-auth] untyped failure:', error);
+  return { kind: 'provider', detail: (error as Error)?.message };
+}
+
 export interface GoogleSignInController {
   /**
    * False on web, where googleAuthConfig() returns null because
@@ -129,7 +149,7 @@ export function useGoogleSignIn(onSuccess?: (session: GoogleSession) => void): G
       // route). When they resolve, the calling screen is unmounted by guards.
       onSuccess?.(session);
     } catch (error) {
-      setFailure(error as GoogleSignInFailure);
+      setFailure(asFailure(error));
     } finally {
       setSubmitting(false);
     }

@@ -1,14 +1,57 @@
+const Meter = require('../models/Meter');
 const MeterReading = require('../models/MeterReading');
+const ServiceConnection = require('../models/ServiceConnection');
 const calculateConsumption = require('../utils/calculateConsumption');
+
+/**
+ * The meter this account's reading belongs to, in the portal's own keys.
+ *
+ * The app knows an account number; the portal's reading queue and its billing run
+ * know a `connectionId`, and its meter registry knows a `meterId`. Resolving them
+ * here is the whole reason a reading taken at a gate now reaches a bill.
+ *
+ * Both come back null where the district holds no record — an account number the
+ * registry does not have, or a connection with no meter installed against it. Null
+ * is stored as null rather than guessed at: a reading filed against the wrong
+ * connection bills the wrong household, which is worse than a reading the portal
+ * cannot see. The response says which happened so the phone need not assume.
+ */
+async function portalKeysFor(accountNumber) {
+  const connection = await ServiceConnection.findOne({ accountNo: accountNumber })
+    .select('_id')
+    .lean();
+  if (!connection) return { connectionId: null, meterId: null };
+
+  // Newest installation wins, matching accountController's meterSerialByConnection:
+  // a connection that has had its meter replaced reads against the box on the wall.
+  // A removed meter is never referenced — that serial is not the one being read.
+  const meter = await Meter.findOne({ connectionId: connection._id, removalDate: null })
+    .select('_id')
+    .sort({ installDate: -1 })
+    .lean();
+
+  return { connectionId: connection._id, meterId: meter ? meter._id : null };
+}
 
 // Idempotent sync endpoint: upserts on the client-generated id so a replayed
 // offline queue never creates duplicate readings.
 exports.sync = async (req, res) => {
   const consumption = calculateConsumption(req.body.previousReading, req.body.currentReading);
   const period = MeterReading.periodOf(req.body.readingDate);
+  const { connectionId, meterId } = await portalKeysFor(req.body.accountNumber);
+
   const reading = await MeterReading.upsertFromClient({
     ...req.body,
     consumption,
+    /**
+     * The portal's shape of the same visit. See the block comment on these fields
+     * in models/MeterReading.js: without them the reading is stored, is correct,
+     * and is invisible to every system that turns a reading into a bill.
+     */
+    connectionId,
+    meterId,
+    consumptionCuM: consumption,
+    source: 'mobile',
     // Derived here, never taken from the body: it is the key that decides which
     // readings compete to be the one that stands for this meter-month.
     period,
@@ -39,6 +82,8 @@ exports.sync = async (req, res) => {
    */
   const standing = await MeterReading.resolvePeriod(reading.accountNumber, period);
 
+  const stands = !standing || String(standing._id) === String(reading._id);
+
   res.json({
     reading,
     /**
@@ -46,7 +91,19 @@ exports.sync = async (req, res) => {
      * sent an older reading for a meter-month that has since been re-read — it is
      * stored and auditable, but it is not what TWD bills from.
      */
-    stands: !standing || String(standing._id) === String(reading._id),
+    stands,
+    /**
+     * Whether this reading can reach a bill at all.
+     *
+     * True means it is in the portal's review queue under a connection the district
+     * recognises; the household's app will show it as read, and an approver can turn
+     * it into a bill. False means the account number resolved to no service
+     * connection, so the record is stored and auditable and nothing downstream can
+     * see it — a clerical gap in the registry, not a failed sync, and one the office
+     * has to close. Reported rather than inferred: "saved" and "will be billed" are
+     * different claims and the phone must not merge them.
+     */
+    queuedForBilling: Boolean(reading.connectionId) && stands,
   });
 };
 

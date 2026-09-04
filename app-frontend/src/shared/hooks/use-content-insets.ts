@@ -33,7 +33,35 @@ export function useContentInsets() {
   const safeArea = useSafeAreaInsets();
 
   return {
-    paddingTop: safeArea.top,
+    /**
+     * ⚠️ ZERO, NOT `safeArea.top`, AND THAT CHANGE IS WORTH READING BEFORE PUTTING
+     * IT BACK. NativeTabs lays its screens out inside the top safe area already,
+     * so adding it here was a second helping of one inset and every tab screen in
+     * both modules opened a status-bar height too low — on a 402×874 iPhone the
+     * Bills heading started ~145pt down, a sixth of the display, on every tab.
+     *
+     * The tell is that STACK screens never had it: `useStackContentInsets` below
+     * omits the same inset for the same reason in different words ("the header
+     * already absorbed it"), and those screens sit correctly while the tab screens
+     * sat low. Two variants of one shell, one adding it and one not, and only the
+     * one that added it looked wrong.
+     *
+     * This also retires the reason for the `shellInsets` override in
+     * app/collector/_layout.tsx, which zeroes `top` in the safe-area context while
+     * the offline banner is up precisely because this line used to consume it. That
+     * override is now inert rather than wrong, and can go whenever someone is in
+     * there.
+     *
+     * TODO: DIAGNOSED FROM AN iOS SCREENSHOT, NOT FROM A DEVICE RUN — the gap was
+     * measured off a 922px-wide capture, and the mechanism (NativeTabs →
+     * UITabBarController insetting its children) is the explanation that fits it,
+     * not something observed in a debugger. Check both platforms. If a tab title
+     * now sits UNDER the status bar, the diagnosis was wrong and `safeArea.top`
+     * belongs back here; if only Android does, the answer is a platform-conditional
+     * inset HERE — not back in the screens, which is where this measurement kept
+     * going wrong before.
+     */
+    paddingTop: 0,
     paddingLeft: safeArea.left,
     paddingRight: safeArea.right,
     paddingBottom: safeArea.bottom + BottomTabInset + Spacing.three,
@@ -43,6 +71,10 @@ export function useContentInsets() {
 /**
  * As above, for screens that want their own top spacing (a title block that should
  * breathe below the notch rather than sit against it).
+ *
+ * `extraTop` is now the WHOLE top padding rather than a supplement to the notch —
+ * which is what the parameter's name always suggested it was. See the note on
+ * `paddingTop` above for why the notch is no longer part of this sum.
  */
 export function useContentInsetsWithTopSpacing(extraTop: number = Spacing.four) {
   const insets = useContentInsets();

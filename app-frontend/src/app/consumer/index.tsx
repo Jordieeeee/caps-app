@@ -14,8 +14,10 @@ import {
   type Notice,
 } from '@/consumer/services/consumer-data';
 import { accountChipsFor } from '@/consumer/lib/account-label';
+import { LatestReadingCards } from '@/consumer/components/latest-reading';
 import { dueLabel, summarise, type Urgency } from '@/consumer/lib/bill-summary';
-import { recentUsage } from '@/consumer/lib/usage-summary';
+import { usageFor } from '@/consumer/lib/usage-summary';
+import { accountsInMonth, monthChipsFor } from '@/consumer/lib/month-filter';
 import { BillCalendarButton } from '@/consumer/components/bill-calendar';
 import { WaterUsageSummary } from '@/consumer/components/water-usage';
 import { useIdentity } from '@/shared/auth/auth-context';
@@ -85,6 +87,22 @@ export default function ConsumerHome() {
    * leaving the screen.
    */
   const [accountFilter, setAccountFilter] = useState<string | null>(null);
+  /**
+   * `YYYY-MM`, or null for every month.
+   *
+   * ⚠️ THE MONTH FILTER DELIBERATELY DOES NOT TOUCH `BillSummaryCard`. Account is a
+   * scope and month is a place to look — a household with two properties has two
+   * balances, but "what do I owe" is a fact about today arrived at by adding every
+   * unpaid bill whenever it was issued, and it does not become a smaller number
+   * because someone scrolled back to June. Home is the screen someone opens on the
+   * way to the payment counter, so a Total due that quietly fell to one month's
+   * charge is the single most expensive thing this screen could get wrong. Same
+   * rule, same reasoning, as consumer/bills/index.tsx.
+   *
+   * What it does narrow is the history: the usage summary and the unbilled meter
+   * reading, both of which are statements about a period rather than about today.
+   */
+  const [monthFilter, setMonthFilter] = useState<string | null>(null);
 
   return (
     <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
@@ -160,12 +178,38 @@ export default function ConsumerHome() {
             <BillSummaryCard bills={billsFor(state.data.bills, accountFilter)} />
           </ScreenSection>
 
+          {/* BELOW the money, not above it with the account chips.
+              
+              Placement is the whole of how this row stays honest. Account sits at
+              the top because it scopes everything under it, Total due included. A
+              month scopes only what follows it — so it is drawn after the figure it
+              does not touch and before the two cards it does, and the reader can
+              see the boundary rather than having to be told about it. */}
+          <HomeMonthFilter
+            bills={billsFor(state.data.bills, accountFilter)}
+            accounts={accountsFor(state.data.accounts, accountFilter)}
+            selected={monthFilter}
+            onSelect={setMonthFilter}
+          />
+
+          {/* Between the money and the usage history, which is where it belongs in
+              time: a reading already taken, not yet billed, explaining the bill
+              that is coming. Absent entirely when there is no such reading — and
+              under a month filter, absent unless the reading belongs to that
+              month. */}
+          <LatestReadingCards
+            accounts={accountsInMonth(
+              accountsFor(state.data.accounts, accountFilter),
+              monthFilter
+            )}
+          />
+
           {/* Second, never first. Home answers "what do I owe and when" before
               anything else; usage is the follow-up question — and on a month with
               a big bill, it is the one that explains the first answer. Rendered
               only when a bill actually carries a reading, so it cannot become an
               empty box promising data the district has not sent. */}
-          <UsageSummary bills={billsFor(state.data.bills, accountFilter)} />
+          <UsageSummary bills={billsFor(state.data.bills, accountFilter)} month={monthFilter} />
 
           <ScreenSection gap={Spacing.two}>
             <TwdButton
@@ -306,6 +350,11 @@ function billsFor(bills: Bill[], accountNumber: string | null): Bill[] {
   return accountNumber ? bills.filter((b) => b.accountNumber === accountNumber) : bills;
 }
 
+/** The same narrowing, applied to the account list the reading card reads. */
+function accountsFor(accounts: Account[], accountNumber: string | null): Account[] {
+  return accountNumber ? accounts.filter((a) => a.accountNumber === accountNumber) : accounts;
+}
+
 /**
  * The account chooser, drawn only when there is a choice.
  *
@@ -348,6 +397,52 @@ function HomeAccountFilter({
 }
 
 /**
+ * The billing-month chooser.
+ *
+ * Always drawn once the household has anything to look at, unlike the account row
+ * directly above it, which hides itself on a single account. The asymmetry is
+ * deliberate and it is the same call Bills makes: a one-chip ACCOUNT row is a
+ * control whose every state shows the same screen, while the month row is the one
+ * filter people go looking for — and a control that is absent on a household's
+ * first month and appears unannounced on their second is one they have to discover
+ * twice. The cost is exactly one inert chip for exactly as long as a household has
+ * one period.
+ *
+ * Chips come from consumer/lib/month-filter.ts, shared with Bills so the two rows
+ * cannot drift into offering different months for the same account.
+ */
+function HomeMonthFilter({
+  bills,
+  accounts,
+  selected,
+  onSelect,
+}: {
+  bills: Bill[];
+  accounts: Account[];
+  selected: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  const chips = monthChipsFor(bills, accounts, selected);
+  // Nothing billed and nothing read: the row would be "All months" alone, a
+  // control with one state. The screen below it is already an empty one.
+  if (chips.length === 0) return null;
+
+  return (
+    <ScreenSection>
+      <FilterChips
+        title="Month"
+        chips={chips}
+        selectedId={selected}
+        onSelect={onSelect}
+        allLabel="All months"
+        allCount={bills.length}
+        accessibilityLabel="Show water usage and meter readings for one billing month, or all of them"
+      />
+    </ScreenSection>
+  );
+}
+
+/**
  * Water used, past 3 months — the same derivation Bills uses, at Home's density.
  *
  * Returns nothing rather than an empty-state card when no recent bill carries a
@@ -355,8 +450,8 @@ function HomeAccountFilter({
  * same room as the answer and gives the consumer a worse one; Bills is where the
  * per-bill "Not recorded" belongs, next to the bill it is about.
  */
-function UsageSummary({ bills }: { bills: Bill[] }) {
-  const usage = recentUsage(bills);
+function UsageSummary({ bills, month }: { bills: Bill[]; month: string | null }) {
+  const usage = usageFor(bills, month);
   if (!usage) return null;
 
   // recentUsage sums each month across every account the consumer holds, so a

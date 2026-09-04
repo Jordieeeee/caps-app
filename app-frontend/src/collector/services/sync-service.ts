@@ -3,6 +3,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { apiFetch } from '@/shared/services/api-client';
 import { AuthError, ClientErrorCode } from '@/shared/types/auth';
 import { OfflineStorage } from './offline-storage';
+import { RouteAccountService } from './route-accounts';
 
 export interface SyncStatus {
   hasUnsyncedData: boolean;
@@ -306,6 +307,13 @@ export class SyncService {
         // Only after the server acknowledged. If this line is ever moved above the
         // await, the record is lost the moment the collector signs out.
         await OfflineStorage.markMeterReadingSynced(reading.id);
+        /**
+         * The route now describes a state of the world this phone has just changed:
+         * the reading it filed becomes the account's previous reading, and the
+         * cached row still holds the one before it. See RouteAccountService.
+         * invalidate — the re-pull happens when the route is next opened, not here.
+         */
+        await RouteAccountService.invalidate();
         success++;
       } catch (error) {
         failed++;

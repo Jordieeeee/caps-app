@@ -3,6 +3,7 @@ const AccountLinkRequest = require('../models/AccountLinkRequest');
 const Consumer = require('../models/Consumer');
 const Feedback = require('../models/Feedback');
 const Meter = require('../models/Meter');
+const RateSchedule = require('../models/RateSchedule');
 const ServiceConnection = require('../models/ServiceConnection');
 const httpError = require('../utils/httpError');
 const ErrorCodes = require('../utils/errorCodes');
@@ -10,6 +11,7 @@ const { balancesByConnection } = require('../utils/accountPaymentSummary');
 const { barangayOf, summarise } = require('../utils/barangay');
 const { displayName } = require('../utils/consumerIdentity');
 const { formatAddress } = require('../utils/address');
+const { latestReadingByConnection } = require('../utils/latestReading');
 const { previousReadingByAccount } = require('../utils/previousReading');
 const { currentZoneIds, zoneNames } = require('../utils/collectorZones');
 
@@ -73,6 +75,17 @@ exports.listMine = async (req, res) => {
    */
   const balances = await balancesByConnection(connections);
 
+  /**
+   * The meter reading that has not become a bill yet.
+   *
+   * The rest of this response describes what the household owes, which is a fact
+   * about the last billing run. This is the one field that can change on the day a
+   * collector walks the street, and it is why the consumer's screen no longer sits
+   * unchanged for weeks after their meter was read. See utils/latestReading.js —
+   * in particular why it carries cubic metres and never pesos.
+   */
+  const latestReadings = await latestReadingByConnection(connections);
+
   const rows = connections.map((connection) => {
     const account = accountByNumber.get(connection.accountNo) || null;
 
@@ -92,6 +105,13 @@ exports.listMine = async (req, res) => {
        * record-creation date and is meaningless against live data.
        */
       linkedDate: connection.dateConnected ? connection.dateConnected.toISOString() : undefined,
+      /**
+       * Null when the meter's latest reading has already been billed, or when
+       * nothing has been read since. Null is rendered as nothing at all rather than
+       * as "not read yet" — this endpoint cannot tell a meter nobody has visited
+       * from one whose reading is already on a bill above.
+       */
+      latestReading: latestReadings.get(String(connection._id)) ?? null,
       ...(balances.get(String(connection._id)) ?? {
         outstanding: null,
         paymentStatus: 'Unknown',
@@ -337,6 +357,19 @@ exports.listRoute = async (req, res) => {
       zoneScoped: Boolean(zoneIds),
       zones: await zoneNames(zoneIds),
     },
+    /**
+     * The district's tariff, cached on the phone with the route.
+     *
+     * It rides on this endpoint rather than on one of its own because the two are
+     * needed at exactly the same moment and under the same conditions: the collector
+     * pulls a route while there is signal, then bills against it offline for the
+     * rest of the day. A separate rates call is a call that fails in the barangay
+     * where the receipt is printed.
+     *
+     * Keyed by classification, matching each row's `accountType`. See
+     * models/RateSchedule.js for what the app was charging instead.
+     */
+    rates: Object.fromEntries(await RateSchedule.inForce()),
     syncedAt: new Date().toISOString(),
   });
 };

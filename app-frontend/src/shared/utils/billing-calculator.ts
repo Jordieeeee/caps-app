@@ -165,24 +165,103 @@ function round2(n: number): number {
 }
 
 /**
+ * TWD's own tariff, as the portal holds it, pulled down with the route.
+ *
+ * See app-backend/models/RateSchedule.js for the whole account of why this is here
+ * and what the placeholder constants above were charging instead. The short version:
+ * the district's residential minimum is ₱200 for the first 10 m³ and the app was
+ * printing ₱140, on paper handed over at the gate.
+ */
+export interface RateBracket {
+  from: number;
+  /** Null on the open-ended top block. */
+  to: number | null;
+  ratePerCubicMeter: number;
+}
+
+export interface RateSchedule {
+  classification: string;
+  /** Cubic metres covered by `minimumCharge` before the brackets begin. */
+  minimumConsumption: number;
+  minimumCharge: number;
+  brackets: RateBracket[];
+  /** Declared by the district but deliberately not applied — see `calculateBill`. */
+  fees?: { name: string; type: string; value: number }[];
+  notes?: string;
+}
+
+/** The route response's `rates`, keyed by an account's `accountType`. */
+export type RateSchedules = Record<string, RateSchedule>;
+
+/**
  * Inclining block tariff: each block's rate applies only to the cubic metres
  * falling inside it, not to the whole consumption.
+ *
+ * With no schedule the placeholder constants above still apply, and that fallback
+ * is deliberate: a handset whose cached route predates the rates being served has
+ * to keep printing *something* at the gate. It is the worse of two answers and the
+ * only offline-safe one — `usingDistrictRates` below is how a caller tells which
+ * they got, so the difference can be stated rather than hidden.
  */
-export function calculateBasicCharge(consumption: number): number {
-  if (!Number.isFinite(consumption) || consumption <= 10) return MINIMUM_CHARGE;
+export function calculateBasicCharge(consumption: number, rates?: RateSchedule): number {
+  if (!Number.isFinite(consumption)) return rates ? rates.minimumCharge : MINIMUM_CHARGE;
 
-  let charge = MINIMUM_CHARGE;
-  charge += Math.min(consumption - 10, 10) * BLOCK_1_RATE;
-  if (consumption > 20) charge += Math.min(consumption - 20, 10) * BLOCK_2_RATE;
-  if (consumption > 30) charge += Math.min(consumption - 30, 10) * BLOCK_3_RATE;
-  if (consumption > 40) charge += (consumption - 40) * BLOCK_4_RATE;
+  if (!rates) {
+    if (consumption <= 10) return MINIMUM_CHARGE;
+    let charge = MINIMUM_CHARGE;
+    charge += Math.min(consumption - 10, 10) * BLOCK_1_RATE;
+    if (consumption > 20) charge += Math.min(consumption - 20, 10) * BLOCK_2_RATE;
+    if (consumption > 30) charge += Math.min(consumption - 30, 10) * BLOCK_3_RATE;
+    if (consumption > 40) charge += (consumption - 40) * BLOCK_4_RATE;
+    return round2(charge);
+  }
+
+  if (consumption <= rates.minimumConsumption) return round2(rates.minimumCharge);
+
+  let charge = rates.minimumCharge;
+  for (const block of rates.brackets) {
+    // `from` is the first cubic metre in the block, so the metres charged at this
+    // rate are those between it and the block's end — or the reading, whichever
+    // comes first. A block entirely above the reading contributes nothing.
+    const upper = block.to ?? Infinity;
+    const metres = Math.min(consumption, upper) - (block.from - 1);
+    if (metres > 0) charge += metres * block.ratePerCubicMeter;
+  }
 
   return round2(charge);
 }
 
-export function calculateBill(consumption: number): Bill {
-  const basicCharge = calculateBasicCharge(consumption);
-  const vat = round2(basicCharge * VAT_RATE);
+/** Whether a receipt was priced from the district's tariff or the placeholder table. */
+export function usingDistrictRates(rates?: RateSchedule): boolean {
+  return Boolean(rates);
+}
+
+export function calculateBill(consumption: number, rates?: RateSchedule): Bill {
+  const basicCharge = calculateBasicCharge(consumption, rates);
+
+  /**
+   * ⚠️ THE DISTRICT'S DECLARED FEES ARE NOT ADDED, AND THAT IS A DECISION MADE
+   * AGAINST ITS OWN BILLS RATHER THAN AGAINST ITS OWN TARIFF.
+   *
+   * The residential schedule declares a 10% environmental fee and 12% VAT. The two
+   * bills the portal's August 2026 run actually produced do not include them:
+   *
+   *   BILL-2026-08-000001-4   10 m³   totalAmountDue ₱200.00
+   *   BILL-2026-08-000002-2    7 m³   totalAmountDue ₱200.00
+   *
+   * ₱200.00 is the residential minimum charge exactly. With the declared fees it
+   * would have been ₱246.40. So the run charges the bracket figure and nothing on
+   * top, and a receipt that added 23% would disagree with the bill the household
+   * then receives — on the only two cases anyone can currently check.
+   *
+   * TODO: Both of those are minimum-charge bills, so they say nothing about fee
+   * handling ABOVE the minimum, and no real bill exists at a higher consumption to
+   * check against. Confirm with the office whether the environmental fee and VAT
+   * apply to bracketed consumption before this is relied on for a large reading; if
+   * they do, the receipt understates by roughly a quarter. The old `VAT_RATE`
+   * constant is left in place above for when that answer arrives.
+   */
+  const vat = rates ? 0 : round2(basicCharge * VAT_RATE);
   const total = round2(basicCharge + vat);
 
   return {
@@ -222,17 +301,41 @@ export function dueDateFor(readingDate: string): string {
 }
 
 /**
- * The month being billed, as a consumer reads it: `Jun 17 - Jul 17, 2025`.
+ * The period being billed, as the district bills it: `September 2026`.
+ *
+ * ⚠️ THIS USED TO PRINT A ROLLING WINDOW — `Aug 4 - Sep 4, 2026` for a reading
+ * taken on the 4th — and no such period exists anywhere in TWD's records. The
+ * server derives `period` from the same reading date as a calendar month
+ * (`MeterReading.periodOf`, `YYYY-MM`), the portal's billing run groups by that
+ * month, and every bill the consumer has ever been shown is labelled with it. The
+ * receipt was the only document in the district quoting a window, so a household
+ * comparing their paper against their bill was comparing two different periods with
+ * two different names for one reading.
+ *
+ * `formatBillingPeriod` in shared/format/date renders the same `YYYY-MM` the server
+ * files, which is what keeps the paper and the bill saying one thing.
  */
 export function billingPeriodFor(readingDate: string): string {
-  const end = new Date(`${readingDate}T00:00:00Z`);
-  const start = new Date(end);
-  start.setUTCMonth(start.getUTCMonth() - 1);
-  const month = (d: Date) => MONTHS[d.getUTCMonth()];
-  return `${month(start)} ${start.getUTCDate()} - ${month(end)} ${end.getUTCDate()}, ${end.getUTCFullYear()}`;
+  const period = readingDate.slice(0, 7);
+  const [year, month] = period.split('-').map(Number);
+  if (!year || !month || month < 1 || month > 12) return period;
+  return `${FULL_MONTHS[month - 1]} ${year}`;
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const FULL_MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
 
 // ── Layout primitives ────────────────────────────────────────────────────────
 // Each returns lines of at most RECEIPT_WIDTH characters. Nothing here pads a
@@ -349,10 +452,23 @@ export function formatReceiptLines(invoice: ReceiptInvoice, account: RouteAccoun
   lines.push(row('Consumption:', `${invoice.consumption} cu.m.`));
   lines.push(RULE);
 
+  /**
+   * Whether this receipt has a VAT component to state at all.
+   *
+   * A bill priced from the district's own schedule carries none — see the block
+   * comment in `calculateBill` on why the declared fees are not applied. Printing
+   * "VAT: 0.00" underneath "VATable Sales: 1,650.00" is not a tidy zero; it is two
+   * lines of the same receipt contradicting each other, and it asserts on a tax
+   * document that TWD charged no VAT — which is exactly the claim this file refuses
+   * to make about the TIN a few hundred lines up. Silence is the honest form of an
+   * answer nobody has confirmed yet.
+   */
+  const hasVat = b.vat > 0 || b.otherChargesVat > 0;
+
   lines.push('WATER CHARGES');
   lines.push(money('Basic Charge:', b.basicCharge));
   lines.push(money('Sr. Citizen Disc:', b.seniorCitizenDiscount));
-  lines.push(money('VAT:', b.vat));
+  if (hasVat) lines.push(money('VAT:', b.vat));
   lines.push(money('SUBTOTAL:', round2(b.basicCharge + b.vat - b.seniorCitizenDiscount)));
   lines.push(THIN_RULE);
 
@@ -365,15 +481,17 @@ export function formatReceiptLines(invoice: ReceiptInvoice, account: RouteAccoun
   lines.push(money('Desludging Fee:', b.desludgingFee));
   lines.push(money('Water Tankering:', b.waterTankering));
   lines.push(money('Others:', b.others));
-  lines.push(money('VAT:', b.otherChargesVat));
+  if (hasVat) lines.push(money('VAT:', b.otherChargesVat));
   lines.push(money('SUBTOTAL:', round2(otherCharges + b.otherChargesVat)));
   lines.push(RULE);
 
   lines.push(money('Total Current Charges:', b.totalCurrentCharges));
-  lines.push(money('VATable Sales:', b.vatableSales));
-  lines.push(money('VAT Zero-rated:', 0));
-  lines.push(money('VAT Exempt:', 0));
-  lines.push(money('VAT:', round2(b.vat + b.otherChargesVat)));
+  if (hasVat) {
+    lines.push(money('VATable Sales:', b.vatableSales));
+    lines.push(money('VAT Zero-rated:', 0));
+    lines.push(money('VAT Exempt:', 0));
+    lines.push(money('VAT:', round2(b.vat + b.otherChargesVat)));
+  }
   lines.push(RULE);
 
   lines.push(money('TOTAL AMOUNT DUE:', b.totalAmountDue));

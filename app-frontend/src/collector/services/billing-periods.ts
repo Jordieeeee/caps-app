@@ -129,11 +129,14 @@ function recentMonthKeys(now: Date): string[] {
  * readings — a record that exists is never hidden by the size of the window.
  */
 export async function loadBillingPeriods(now: Date = new Date()): Promise<BillingReport> {
-  const [readings, accounts] = await Promise.all([
+  const [readings, accounts, rates] = await Promise.all([
     OfflineStorage.getMeterReadings(),
     // Cache only — the route as the Route screen holds it. This is read, never
     // written: the route is that screen's data and this one only borrows it.
     RouteAccountService.getCached(),
+    // The same tariff the receipt was printed from, so this report and the paper
+    // cannot disagree about what a reading billed to.
+    RouteAccountService.getCachedRates(),
   ]);
 
   const accountFor = new Map(accounts.map((a) => [a.accountNumber, a]));
@@ -180,10 +183,14 @@ export async function loadBillingPeriods(now: Date = new Date()): Promise<Billin
       address: account.address,
       readingDate: reading.readingDate,
       dueDate: dueDateFor(reading.readingDate),
-      // The same calculation that printed the consumer's copy at the meter. Not a
-      // stored amount: the reading is what was recorded, and re-deriving the bill
-      // from it means the report and the paper can never disagree.
-      amount: calculateBill(reading.consumption).totalAmountDue,
+      // The same calculation that printed the consumer's copy at the meter, at the
+      // same rates. Not a stored amount: the reading is what was recorded, and
+      // re-deriving the bill from it means the report and the paper can never
+      // disagree.
+      amount: calculateBill(
+        reading.consumption,
+        rates?.[(account.accountType || account.rateClass || '').toLowerCase()]
+      ).totalAmountDue,
       previousReading: reading.previousReading,
       currentReading: reading.currentReading,
       consumption: reading.consumption,

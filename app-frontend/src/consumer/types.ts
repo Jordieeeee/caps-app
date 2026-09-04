@@ -36,6 +36,65 @@ export interface Account {
    */
   outstanding: number | null;
   paymentStatus: 'Active' | 'Past Due' | 'Unknown';
+  /**
+   * The meter reading TWD holds that has not become a bill yet, or null.
+   *
+   * ⚠️ THIS IS THE ONLY FIELD ON THIS SCREEN THAT CHANGES ON THE DAY THE METER IS
+   * READ. Everything else here describes the last billing run, so a household whose
+   * meter was read this morning saw nothing at all until the run at the end of the
+   * period — the app was silent about a visit that had already happened.
+   *
+   * Null means either that the latest reading is already on a bill above, or that
+   * nothing has been read since. The server cannot distinguish them and neither can
+   * this screen, so null renders as nothing rather than as "not read yet".
+   *
+   * It carries NO amount, deliberately. See app-backend/utils/latestReading.js: the
+   * rate schedule, arrears and discounts that turn cubic metres into pesos live in
+   * the Admin Portal, and a figure shown here that the bill then contradicts is one
+   * the consumer will have believed first.
+   */
+  latestReading: LatestReading | null;
+}
+
+/**
+ * A reading of a household's own meter, before it becomes a bill.
+ *
+ * `state` is about TWD's review, not about the household: `pending` is the ordinary
+ * state of a reading waiting for the month to close, and must not be rendered as a
+ * problem. Neither value means the consumer owes anything yet.
+ */
+export interface LatestReading {
+  /** `YYYY-MM-DD`, the day the collector stood at the meter. */
+  readingDate: string;
+  /** `YYYY-MM`, the period this reading will be billed in. */
+  period: string;
+  currentReading: number;
+  /**
+   * Cubic metres SINCE THE LAST BILL — not since the last reading, and the
+   * difference is not a nuance.
+   *
+   * The server derives this as `currentReading` minus the closing reading of the
+   * household's most recent non-void bill, which is the same subtraction the
+   * district's next billing run performs. It was previously the handset's own
+   * stamped `consumption`, a reading-to-reading delta that on live data understated
+   * the unbilled total by more than half. See app-backend/utils/latestReading.js
+   * for the three separate ways that figure went wrong.
+   *
+   * Null where TWD holds no baseline at all (no bill, no opening reading) — print
+   * the card without a quantity rather than printing 0, which is a claim that the
+   * household has used no water.
+   */
+  consumption: number | null;
+  /**
+   * `YYYY-MM` of the bill `consumption` is measured from, or null when it was
+   * measured from an opening reading because the household has no bill yet.
+   *
+   * Present so the card can NAME the bill instead of saying "since then" and
+   * leaving the reader to assume it means the reading date directly above it — the
+   * one date on the card the figure is definitely not measured from.
+   */
+  billedThrough: string | null;
+  state: 'pending' | 'approved';
 }
 
 /**

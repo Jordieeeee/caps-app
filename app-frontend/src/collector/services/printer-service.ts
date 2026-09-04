@@ -62,6 +62,44 @@ export function isBluetoothPermissionError(error: unknown): error is BluetoothPe
   return error instanceof Error && error.name === 'BluetoothPermissionError';
 }
 
+/**
+ * Name fragments that mark a device as one of these thermal printers.
+ *
+ * Compared against a *normalised* name — uppercased with every non-alphanumeric
+ * character removed — because the label on the box and the name on the air are
+ * not the same string. The unit in the field advertises `PT210_6616`: no hyphen,
+ * and a four-hex-digit suffix from its MAC. The old filter tested
+ * `"PT210_6616".includes("PT-210")`, which is false, so the one printer the
+ * district owns was found by the radio and then thrown away by this list. Every
+ * scan since has ended in "No printers found" with the printer switched on and
+ * sitting next to the phone.
+ *
+ * Normalising both sides is what makes `PT-210`, `PT210`, `PT_210` and
+ * `PT210_6616` the same device to us.
+ */
+const PRINTER_NAME_KEYWORDS = ['PT210', 'GOOJPRT', 'PRINTER', 'THERMAL', 'POS', 'MTP', 'RPP'];
+
+const normaliseName = (value: string): string => value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+/**
+ * Whether an advertised name looks like a receipt printer.
+ *
+ * Both fields are checked: `name` is the peripheral's GAP name, `localName` is
+ * what this particular advertisement carried, and on iOS they are not always the
+ * same — a device cached by CoreBluetooth from an earlier session can surface
+ * under a stale `name` while the live `localName` is the one with the model in it.
+ *
+ * This is a hint used to sort and label the scan results, never a gate that hides
+ * a device: an unrecognised name is still offered to the collector to tap.
+ */
+export function isLikelyPrinter(device: Pick<Device, 'name' | 'localName'>): boolean {
+  const candidates = [device.name, device.localName].filter((value): value is string => !!value);
+  return candidates.some((value) => {
+    const normalised = normaliseName(value);
+    return PRINTER_NAME_KEYWORDS.some((keyword) => normalised.includes(keyword));
+  });
+}
+
 /** Resolved once; `undefined` means "not attempted yet", `null` means "unavailable". */
 let bleModule: typeof import('react-native-ble-plx') | null | undefined;
 
@@ -207,7 +245,13 @@ export class PrinterService {
     }
   }
 
-  // Scan for printers
+  /**
+   * Scan for nearby BLE devices, likely printers first.
+   *
+   * Returns every device that advertised a name, not only the ones matching
+   * `PRINTER_NAME_KEYWORDS` — see the comment in the callback. Callers use
+   * `isLikelyPrinter` to separate the two.
+   */
   static async scanForPrinters(durationSeconds: number = 10): Promise<Device[]> {
     if (!this.bleManager) {
       this.initialize();
@@ -232,16 +276,19 @@ export class PrinterService {
             return;
           }
 
-          if (device && device.name) {
-            // Filter for thermal printers (common names)
-            const printerKeywords = ['PT-210', 'GOOJPRT', 'Printer', 'Thermal'];
-            const isPrinter = printerKeywords.some(keyword => 
-              device.name?.toUpperCase().includes(keyword.toUpperCase())
-            );
-
-            if (isPrinter && !devices.find(d => d.id === device.id)) {
-              devices.push(device);
-            }
+          /**
+           * Keep every named device, recognised or not.
+           *
+           * Dropping everything that fails the name test is what made this screen
+           * unusable: one wrong keyword and the collector has no way to reach a
+           * printer the radio can plainly see. These units are relabelled by every
+           * reseller, so the name is a hint about ordering, not a fact to gate on.
+           * Unnamed devices are still skipped — an advertisement with no name at
+           * all gives the collector nothing to choose between.
+           */
+          const advertisedName = device?.name ?? device?.localName ?? null;
+          if (device && advertisedName && !devices.find((d) => d.id === device.id)) {
+            devices.push(device);
           }
         }
       );
@@ -249,7 +296,17 @@ export class PrinterService {
       // Stop scanning after duration
       setTimeout(() => {
         this.bleManager!.stopDeviceScan();
-        resolve(devices);
+        // Recognised printers first; the rest stay in order of discovery. The
+        // screen shows them under separate headings rather than calling a pair
+        // of earphones a printer.
+        const ranked = devices
+          .map((device, index) => ({ device, index }))
+          .sort((a, b) => {
+            const byKind = Number(isLikelyPrinter(b.device)) - Number(isLikelyPrinter(a.device));
+            return byKind !== 0 ? byKind : a.index - b.index;
+          })
+          .map((entry) => entry.device);
+        resolve(ranked);
       }, durationSeconds * 1000);
     });
   }

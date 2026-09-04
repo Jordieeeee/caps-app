@@ -26,8 +26,27 @@ import {
   calculateBill,
   dueDateFor,
   invoiceNumberFor,
+  type RateSchedule,
+  type RateSchedules,
   type RouteAccount,
 } from '@/shared/utils/billing-calculator';
+
+/**
+ * The district's schedule for one stop's classification.
+ *
+ * Mirrors `ratesFor` in collector/services/route-accounts.ts, against the plain
+ * `RouteAccount` this screen reads from the cache. Undefined for an unknown
+ * classification or a cache written before rates were served — `calculateBill`
+ * falls back to the app's placeholder table in that case.
+ */
+function ratesFor(
+  rates: RateSchedules | undefined,
+  account: RouteAccount | null
+): RateSchedule | undefined {
+  if (!rates || !account) return undefined;
+  const key = (account.accountType || account.rateClass || '').toLowerCase();
+  return key ? rates[key] : undefined;
+}
 import { downloadDailyReport, downloadReceipt } from '@/collector/services/document-service';
 
 /**
@@ -72,6 +91,12 @@ interface ReadingRow {
   readingDate: string;
   /** Null when the reading has outlived its route cache — see `consumerName`. */
   account: RouteAccount | null;
+  /**
+   * The tariff this row was priced at, carried so a re-issued softcopy reproduces
+   * the original amount rather than repricing the reading at whatever the phone
+   * holds now. Undefined where the cache predates rates being served.
+   */
+  rates?: RateSchedule;
 }
 
 interface DailySummary {
@@ -83,9 +108,12 @@ interface DailySummary {
 }
 
 async function loadDailySummary(): Promise<DailySummary> {
-  const [accounts, readings] = await Promise.all([
+  const [accounts, readings, rates] = await Promise.all([
     RouteAccountService.getCached(),
     OfflineStorage.getMeterReadings(),
+    // The district's tariff as the route last carried it, so this screen totals a
+    // day's work at the rates its receipts were printed at.
+    RouteAccountService.getCachedRates(),
   ]);
 
   // Must be the same local key the readings were stamped with — a UTC "today"
@@ -106,13 +134,14 @@ async function loadDailySummary(): Promise<DailySummary> {
         // looks the consumer up by.
         consumerName: account?.consumerName ?? r.accountNumber,
         consumption: r.consumption,
-        amountDue: calculateBill(r.consumption).totalAmountDue,
+        amountDue: calculateBill(r.consumption, ratesFor(rates, account)).totalAmountDue,
         synced: r.synced,
         timestamp: r.timestamp,
         previousReading: r.previousReading,
         currentReading: r.currentReading,
         readingDate: r.readingDate,
         account,
+        rates: ratesFor(rates, account),
       };
     })
     // Most recent first — the collector is checking the meter they just left.
@@ -219,7 +248,7 @@ export default function DailySummaryScreen() {
             previousReading: row.previousReading,
             currentReading: row.currentReading,
             consumption: row.consumption,
-            bill: calculateBill(row.consumption),
+            bill: calculateBill(row.consumption, row.rates),
             collectorName: collector.name,
             printedAt: row.timestamp,
           },

@@ -653,6 +653,30 @@ function AccountCard({ account }: { account: Account }) {
         </ThemedText>
       </View>
 
+      {/**
+       * The reading that has not been billed yet, under the balance rather than
+       * beside it — it is not money, and a row aligned with the outstanding figure
+       * would be read as one.
+       *
+       * "Paid up" is true and can sit directly above "meter read on the 4th"
+       * without contradiction: the household owes nothing today and a bill for
+       * that reading is still coming. Saying so here is the difference between a
+       * consumer who is surprised by next month's bill and one who is not. No
+       * amount, for the reasons in app-backend/utils/latestReading.js.
+       */}
+      {account.latestReading && (
+        <View style={[styles.balanceRow, { borderTopColor: theme.border }]}>
+          <ThemedText type="small" themeColor="textSecondary">
+            Meter read {formatDate(account.latestReading.readingDate)}
+          </ThemedText>
+          <ThemedText type="small">
+            {account.latestReading.consumption !== null
+              ? `${account.latestReading.consumption} m³ · not yet billed`
+              : 'Not yet billed'}
+          </ThemedText>
+        </View>
+      )}
+
       {/* Secondary, not danger. Reporting a wrong record destroys nothing — the red
           treatment belonged to the Unlink this replaces, and keeping it would warn
           a consumer away from the one action that gets the mistake fixed. */}

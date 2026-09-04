@@ -6,8 +6,14 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { listAccounts, listBills, type Account, type Bill } from '@/consumer/services/consumer-data';
 import { dueLabel, daysUntil, summarise } from '@/consumer/lib/bill-summary';
-import { formatCuM, recentUsage } from '@/consumer/lib/usage-summary';
+import { formatCuM, usageFor } from '@/consumer/lib/usage-summary';
+import {
+  accountsInMonth,
+  billsInMonth,
+  monthChipsFor,
+} from '@/consumer/lib/month-filter';
 import { WaterUsageCard } from '@/consumer/components/water-usage';
+import { LatestReadingCards } from '@/consumer/components/latest-reading';
 import { accountChipsFor } from '@/consumer/lib/account-label';
 import { FilterChips } from '@/shared/components/filter-chips';
 import { Icon } from '@/shared/components/icon';
@@ -56,6 +62,8 @@ export default function ConsumerBillsScreen() {
   );
   const [filter, setFilter] = useState<string | null>(null);
   const [accountFilter, setAccountFilter] = useState<string | null>(null);
+  /** `YYYY-MM`, or null for every month. */
+  const [monthFilter, setMonthFilter] = useState<string | null>(null);
 
   return (
     <ScreenContainer onRefresh={() => void refresh()} refreshing={refreshing}>
@@ -94,6 +102,8 @@ export default function ConsumerBillsScreen() {
           onFilter={setFilter}
           accountFilter={accountFilter}
           onAccountFilter={setAccountFilter}
+          monthFilter={monthFilter}
+          onMonthFilter={setMonthFilter}
           onHowToPay={() => router.push('/consumer/bills/how-to-pay')}
         />
       )}
@@ -108,6 +118,8 @@ interface BillsBodyProps {
   onFilter: (id: string | null) => void;
   accountFilter: string | null;
   onAccountFilter: (id: string | null) => void;
+  monthFilter: string | null;
+  onMonthFilter: (id: string | null) => void;
   onHowToPay: () => void;
 }
 
@@ -118,6 +130,8 @@ function BillsBody({
   onFilter,
   accountFilter,
   onAccountFilter,
+  monthFilter,
+  onMonthFilter,
   onHowToPay,
 }: BillsBodyProps) {
   /**
@@ -148,10 +162,30 @@ function BillsBody({
   const inAccount = accountFilter
     ? bills.filter((b) => b.accountNumber === accountFilter)
     : bills;
-  const visible = filter ? inAccount.filter((b) => b.status === filter) : inAccount;
+
+  /**
+   * Month narrows the LIST, not the money — the same rule the status filter
+   * follows, and for the same reason.
+   *
+   * Account is a scope: a consumer with two properties genuinely has two separate
+   * balances, so picking one has to move the Outstanding tile with it. A month is
+   * not a scope, it is a place to look. "What you owe" is a fact about today,
+   * arrived at by adding up every unpaid bill whenever it was issued, and it does
+   * not become a smaller number because someone scrolled back to June. A tile that
+   * fell to ₱200.00 while a household actually owed ₱1,400 would be read as the
+   * amount to bring to the counter.
+   *
+   * So the TILES keep reading from `inAccount`. The usage card and the unbilled
+   * reading do not: those are not money, they are history, and history is exactly
+   * the thing a month filter is for. Tapping `Jun 2026` and being shown June's
+   * bills under a usage card still headlining August is the filter half-applied —
+   * the reader has to hold in their head which parts of the screen moved.
+   */
+  const inMonth = billsInMonth(inAccount, monthFilter);
+  const visible = filter ? inMonth.filter((b) => b.status === filter) : inMonth;
 
   const { totalDue, unknownAmounts, outstanding } = summarise(inAccount);
-  const usage = recentUsage(inAccount);
+  const usage = usageFor(inAccount, monthFilter);
 
   const totalPaid = inAccount
     .filter((b) => b.status === 'paid')
@@ -169,15 +203,93 @@ function BillsBody({
    */
   const accountChips = accountChipsFor(bills, accounts);
 
+  /** The account filter, applied to the accounts themselves. */
+  const accountsFor = (rows: Account[], accountNumber: string | null) =>
+    accountNumber ? rows.filter((a) => a.accountNumber === accountNumber) : rows;
+
+  /**
+   * Status chips, minus the ones that would filter to nothing.
+   *
+   * "Overdue 0" and "Paid 0" sat side by side on a screen holding one unpaid
+   * bill: two of the four controls did nothing, and tapping either emptied the
+   * list. That is the same defect `accountChipsFor` already avoids one row above
+   * — its comment calls a chip that filters to an empty screen "a broken control
+   * rather than 'nothing billed here yet'" — and the status row was simply never
+   * held to it.
+   *
+   * The zero is not information worth a control. "You have no overdue bills" is
+   * already said, and said better, by the Outstanding tile above and by the list
+   * itself; a greyed pill saying `Overdue 0` makes the reader check whether the
+   * filter is broken.
+   *
+   * The SELECTED chip survives at zero, always. Dropping the control someone is
+   * standing on would make the row reshuffle under their finger and leave the
+   * screen filtered by something no longer on it — with no way back but "All".
+   */
+  const statusChips = [
+    // Counted within the account AND month already chosen, not across everything.
+    // A chip reading "Overdue 4" beside a list showing two is the kind of small
+    // lie that makes someone distrust the total — and it would say exactly that
+    // if these counted `inAccount` while the rows underneath came from `inMonth`.
+    { id: 'overdue', label: 'Overdue', count: inMonth.filter((b) => b.status === 'overdue').length },
+    { id: 'pending', label: 'Unpaid', count: inMonth.filter((b) => b.status === 'pending').length },
+    { id: 'paid', label: 'Paid', count: inMonth.filter((b) => b.status === 'paid').length },
+  ].filter((chip) => chip.count > 0 || chip.id === filter);
+
+  /**
+   * The month row, derived in consumer/lib/month-filter.ts so Home's row and this
+   * one cannot drift — see that file on why periods come from unbilled READINGS as
+   * well as from bills, and why a reading-only month carries no count.
+   *
+   * Scoped to the chosen ACCOUNT and not to the chosen status: a chip counts what
+   * the month would show you if you tapped it, and tapping a month does not change
+   * the status filter.
+   */
+  const monthChips = monthChipsFor(inAccount, accountsFor(accounts, accountFilter), monthFilter);
+
+  /**
+   * The month row is ALWAYS drawn, and that is a deliberate departure from the
+   * account row directly above it.
+   *
+   * By this file's other rule it would be hidden on a single billing period — one
+   * chip beside "All months" is a control whose every state shows the same rows,
+   * which is why `spansAccounts` exists and why the status row now drops its zeros.
+   * The month row is exempt because it is the one filter people go looking for:
+   * "show me June" is the reason someone opens a bills list they have already
+   * read, and a control that is absent on a household's first month and appears
+   * unannounced on their second is one they have to discover twice. A row that is
+   * always in the same place is worth more here than a row that is never inert.
+   *
+   * The cost is real and bounded: exactly one dead chip, for exactly as long as a
+   * household has one billing period.
+   */
+
   if (bills.length === 0) {
     return (
-      <ScreenSection>
-        <ListEmpty
-          icon="file-text"
-          title="No bills yet"
-          body="Once TWD issues a bill for your linked account, it will appear here with its due date."
-        />
-      </ScreenSection>
+      <>
+        {/**
+         * The reading shows here too, and this is the case where it matters most.
+         *
+         * A household on its first billing cycle has no bills at all — so without
+         * this, the consumer whose meter was read this morning opens Bills and is
+         * told "No bills yet", full stop, with nothing anywhere in the app
+         * acknowledging the visit. That is the exact silence this card exists to
+         * end, and the empty state is where the silence was loudest.
+         *
+         * Above the empty state rather than below it: the reading is the more
+         * recent and more specific fact, and "nothing has been billed" reads
+         * better as the explanation underneath it than as the headline over it.
+         */}
+        <LatestReadingCards accounts={accounts} />
+
+        <ScreenSection>
+          <ListEmpty
+            icon="file-text"
+            title="No bills yet"
+            body="Once TWD issues a bill for your linked account, it will appear here with its due date."
+          />
+        </ScreenSection>
+      </>
     );
   }
 
@@ -185,7 +297,16 @@ function BillsBody({
     <>
       {/* Two tiles, not three. Money needs the width — three peso figures across a
           375px screen is what wrapped "₱18500.00" into "₱1850" / "0.00" on the
-          collector's report tiles. */}
+          collector's report tiles.
+
+          And two only while there are two figures to state. "Paid to date ₱0.00"
+          took half the row to report an absence, on the screen where the other
+          half is the number the consumer opened the app for. Nothing paid is the
+          starting state of every new account and of every household TWD has not
+          recorded a payment for — see the note further down on the portal not
+          stamping payment dates — so this is the ordinary case, not an edge one.
+          The Outstanding figure takes the full width until there is a payment
+          worth naming beside it. */}
       <ScreenSection gap={Spacing.three}>
         <View style={styles.tiles}>
           <ThemedView type="backgroundElement" style={styles.tile}>
@@ -200,18 +321,20 @@ function BillsBody({
               {formatPeso(totalDue)}
             </ThemedText>
           </ThemedView>
-          <ThemedView type="backgroundElement" style={styles.tile}>
-            <ThemedText type="small" themeColor="textSecondary">
-              Paid to date
-            </ThemedText>
-            <ThemedText
-              style={styles.tileAmount}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}>
-              {formatPeso(totalPaid)}
-            </ThemedText>
-          </ThemedView>
+          {totalPaid > 0 && (
+            <ThemedView type="backgroundElement" style={styles.tile}>
+              <ThemedText type="small" themeColor="textSecondary">
+                Paid to date
+              </ThemedText>
+              <ThemedText
+                style={styles.tileAmount}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}>
+                {formatPeso(totalPaid)}
+              </ThemedText>
+            </ThemedView>
+          )}
         </View>
 
         {/* Said out loud, because a total that silently drops a bill is how someone
@@ -244,6 +367,32 @@ function BillsBody({
         </ScreenSection>
       )}
 
+      {/**
+       * The reading that has no bill yet, immediately above the bills that do.
+       *
+       * This screen is a timeline of a household's billing, and a meter already
+       * read is the head of it — the next row, not yet issued. Putting it here
+       * answers the question the list provokes on the day a collector calls: "my
+       * meter was read this morning, so where is it?" Below the usage card,
+       * because that card is about months TWD has billed and this is explicitly
+       * about one it has not.
+       *
+       * It narrows with the ACCOUNT and MONTH filters and not with the STATUS
+       * filter. Choosing "Boot" is choosing a property and must scope every figure;
+       * choosing "Sep 2026" is choosing a period, and a reading taken in September
+       * is not part of June however you filter the bills. Choosing "Unpaid" is a
+       * reading of the bills that are there, and has nothing to say about a reading
+       * that is not a bill at all — a reading has no payment status to match.
+       *
+       * The month chips include this reading's own period precisely so the filter
+       * can land on it; see consumer/lib/month-filter.ts.
+       *
+       * Same component as Home renders — see consumer/components/latest-reading.
+       */}
+      <LatestReadingCards
+        accounts={accountsInMonth(accountsFor(accounts, accountFilter), monthFilter)}
+      />
+
       <ScreenSection gap={Spacing.three}>
         <ThemedText type="defaultBold">Your bills</ThemedText>
 
@@ -267,43 +416,68 @@ function BillsBody({
           />
         )}
 
+        {/* Between Account and Status, because it belongs with Account: both
+            narrow WHICH bills are in view, while Status is a reading of whatever
+            is left — which is also the order the counts flow in, since the status
+            counts above are computed after this row has had its say. */}
         <FilterChips
-          title={spansAccounts ? 'Status' : undefined}
-          chips={[
-            {
-              id: 'overdue',
-              label: 'Overdue',
-              // Counted within the selected account, not across everything.
-              // A chip reading "Overdue 4" beside a list showing two is the
-              // kind of small lie that makes someone distrust the total.
-              count: inAccount.filter((b) => b.status === 'overdue').length,
-            },
-            {
-              id: 'pending',
-              label: 'Unpaid',
-              count: inAccount.filter((b) => b.status === 'pending').length,
-            },
-            {
-              id: 'paid',
-              label: 'Paid',
-              count: inAccount.filter((b) => b.status === 'paid').length,
-            },
-          ]}
+          title="Month"
+          chips={monthChips}
+          selectedId={monthFilter}
+          onSelect={onMonthFilter}
+          allLabel="All months"
+          allCount={inAccount.length}
+          accessibilityLabel="Filter bills by billing month"
+        />
+
+        {/* Always titled now: the Month row above is always present, so Status
+            always has a sibling — and FilterChips' rule is that two unlabelled
+            rows of pills are a puzzle. The old conditional dated from when Status
+            could be the only row on the screen, which it no longer can be. */}
+        <FilterChips
+          title="Status"
+          chips={statusChips}
           selectedId={filter}
           onSelect={onFilter}
           allLabel="All"
-          allCount={inAccount.length}
+          allCount={inMonth.length}
           accessibilityLabel="Filter bills by status"
         />
 
-        {visible.length === 0 && (
-          <ListEmpty
-            icon="file-text"
-            title="No bills with this status"
-            body="Nothing matches the selected filter. Clear it to see every bill."
-            action={{ label: 'Show all', onPress: () => onFilter(null) }}
-          />
-        )}
+        {/**
+         * The empty state names the filter that actually emptied the list, and
+         * offers to clear THAT one.
+         *
+         * There is now more than one control that can empty this list, and a single
+         * "No bills with this status / Show all" was wrong for the new one twice
+         * over: it blamed the status filter for a month filter's doing, and its
+         * button cleared the status — leaving the screen just as empty, which reads
+         * as a broken button rather than as a filter still in force.
+         *
+         * The month case is not an error and must not be phrased as one. Every
+         * period carrying only an unbilled reading has a chip (see
+         * consumer/lib/month-filter.ts), so landing here with the reading card
+         * visible directly above is the ORDINARY result of tapping the current
+         * month — the household's meter has been read and TWD has not billed it
+         * yet. "Nothing matches" would tell them their reading is missing while it
+         * is on screen.
+         */}
+        {visible.length === 0 &&
+          (monthFilter && inMonth.length === 0 ? (
+            <ListEmpty
+              icon="file-text"
+              title={`No bills for ${formatBillingPeriod(monthFilter)}`}
+              body="TWD has not issued a bill for this month yet. Any meter reading already taken for it is shown above."
+              action={{ label: 'All months', onPress: () => onMonthFilter(null) }}
+            />
+          ) : (
+            <ListEmpty
+              icon="file-text"
+              title="No bills with this status"
+              body="Nothing matches the selected filter. Clear it to see every bill."
+              action={{ label: 'Show all', onPress: () => onFilter(null) }}
+            />
+          ))}
 
         {visible.map((bill) => (
           <BillCard key={bill.id} bill={bill} showAccount={spansAccounts} />

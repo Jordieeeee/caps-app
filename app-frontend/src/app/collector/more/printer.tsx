@@ -5,6 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import {
   PrinterService,
   isBluetoothPermissionError,
+  isLikelyPrinter,
   type BlePermissionResult,
 } from '@/collector/services/printer-service';
 import { Icon } from '@/shared/components/icon';
@@ -17,6 +18,8 @@ import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
 interface FoundPrinter {
   id: string;
   name: string;
+  /** Whether the advertised name matched a known printer — see `isLikelyPrinter`. */
+  recognised: boolean;
 }
 
 /**
@@ -82,7 +85,13 @@ export default function PrinterScreen() {
     try {
       PrinterService.initialize();
       const devices = await PrinterService.scanForPrinters(8);
-      setFound(devices.map((d) => ({ id: d.id, name: d.name ?? 'Unnamed printer' })));
+      setFound(
+        devices.map((d) => ({
+          id: d.id,
+          name: d.name ?? d.localName ?? 'Unnamed device',
+          recognised: isLikelyPrinter(d),
+        }))
+      );
     } catch (error) {
       // A refused permission is not a failed search, and telling a collector to
       // "check that Bluetooth is turned on" when Bluetooth is on and the app was
@@ -101,6 +110,18 @@ export default function PrinterScreen() {
       setHasScanned(true);
     }
   }, []);
+
+  /**
+   * Recognised printers and everything else, kept apart.
+   *
+   * The other devices are only offered when nothing was recognised, and under
+   * their own heading — a collector who is told "Printers found" and shown a pair
+   * of earphones learns to distrust the screen. When the name filter misses (it
+   * has before: these units ship under whatever name the reseller flashed), this
+   * is the way through instead of a dead end.
+   */
+  const recognised = found.filter((printer) => printer.recognised);
+  const unrecognised = found.filter((printer) => !printer.recognised);
 
   const connect = useCallback(async (printer: FoundPrinter) => {
     setConnectingId(printer.id);
@@ -205,10 +226,10 @@ export default function PrinterScreen() {
           />
         )}
 
-        {!connected && found.length > 0 && (
+        {!connected && recognised.length > 0 && (
           <View style={styles.results}>
             <ThemedText type="defaultBold">Printers found</ThemedText>
-            {found.map((printer) => (
+            {recognised.map((printer) => (
               <Pressable
                 key={printer.id}
                 onPress={() => void connect(printer)}
@@ -237,6 +258,43 @@ export default function PrinterScreen() {
             ))}
           </View>
         )}
+
+        {!connected && recognised.length === 0 && unrecognised.length > 0 && (
+          <View style={styles.results}>
+            <ThemedText type="defaultBold">Other Bluetooth devices</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              No device named itself as a printer. If one of these is the PT-210, tap it to connect.
+            </ThemedText>
+            {unrecognised.map((printer) => (
+              <Pressable
+                key={printer.id}
+                onPress={() => void connect(printer)}
+                disabled={connectingId !== null}
+                accessibilityRole="button"
+                accessibilityLabel={`Connect to ${printer.name}`}
+                accessibilityState={{ disabled: connectingId !== null, busy: connectingId === printer.id }}
+                style={({ pressed }) => [
+                  styles.printerRow,
+                  {
+                    borderColor: theme.border,
+                    backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement,
+                  },
+                ]}>
+                <Icon name="printer" size={22} color={theme.textSecondary} />
+                <View style={styles.printerText}>
+                  <ThemedText type="defaultBold">{printer.name}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                    {printer.id}
+                  </ThemedText>
+                </View>
+                <ThemedText type="smallBold" style={{ color: theme.primary }}>
+                  {connectingId === printer.id ? 'Connecting…' : 'Connect'}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+        )}
+
       </ScreenSection>
     </ScreenContainer>
   );

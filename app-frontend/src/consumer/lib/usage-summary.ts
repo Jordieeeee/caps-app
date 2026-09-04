@@ -45,6 +45,17 @@ export interface RecentUsage {
    * total is a floor, not the household's full usage, and the UI has to say so.
    */
   missing: number;
+  /**
+   * `YYYY-MM` when the consumer has filtered to one billing month, else null.
+   *
+   * The card's subtitle depends on WHY it is showing a single month, and without
+   * this it cannot tell the two apart: a household on its first bill genuinely has
+   * "one billed month on record", while a household with a year of history that
+   * tapped `Aug 2026` does not — and printing that sentence at them states
+   * something false about their account rather than about the filter they are
+   * standing in.
+   */
+  scopedToPeriod: string | null;
 }
 
 /** How many months "past 3 months" means. Monthly billing, so three bills. */
@@ -112,7 +123,32 @@ export function recentUsage(bills: Bill[], limit: number = MONTHS): RecentUsage 
     change: previous ? { delta: latest.cubicMetres - previous.cubicMetres, from: previous } : null,
     label: usageLabel(months.length),
     missing,
+    scopedToPeriod: null,
   };
+}
+
+/**
+ * `recentUsage`, under the screen's month filter.
+ *
+ * Both consumer screens call this rather than `recentUsage` directly, so the month
+ * chips mean the same thing on Home as they do on Bills — the rule this codebase
+ * keeps re-learning is that two screens deriving the same figure two ways is how
+ * they end up disagreeing about it in front of the consumer.
+ *
+ * A chosen month is NOT "last month": the heading is relabelled with the period
+ * itself, because "Last month used — 10 m³" over a household that tapped `Jun 2026`
+ * names the wrong month at a number that is right, and the reader has no way to see
+ * which of the two is the mistake. `change` falls away on its own — one month has
+ * nothing before it inside the filter — which is the honest result rather than a
+ * comparison reaching outside the scope the consumer set.
+ */
+export function usageFor(bills: Bill[], month: string | null): RecentUsage | null {
+  if (!month) return recentUsage(bills);
+
+  const usage = recentUsage(bills.filter((b) => b.billingPeriod === month));
+  if (!usage) return null;
+
+  return { ...usage, label: `${formatBillingPeriod(month)} used`, scopedToPeriod: month };
 }
 
 /**

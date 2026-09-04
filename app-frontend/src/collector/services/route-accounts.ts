@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { OfflineStorage } from '@/collector/services/offline-storage';
 import { localDateKey } from '@/shared/format/date';
 import { apiFetch } from '@/shared/services/api-client';
-import type { RouteAccount } from '@/shared/utils/billing-calculator';
+import type { RateSchedule, RateSchedules, RouteAccount } from '@/shared/utils/billing-calculator';
 
 /**
  * The collector's route, on the phone.
@@ -27,6 +27,8 @@ import type { RouteAccount } from '@/shared/utils/billing-calculator';
 /** Cache key kept from the fixture era so an installed handset keeps its route. */
 const STORAGE_KEY = '@collector_route_accounts';
 const SYNCED_AT_KEY = '@collector_route_preloaded_at';
+/** Set when this phone changes something the route describes. See `invalidate`. */
+const REFRESH_KEY = '@collector_route_needs_refresh';
 
 /**
  * How long a cached route is served without trying the network again.
@@ -52,6 +54,30 @@ export interface RouteAccountRow extends RouteAccount {
   /** Present once read. */
   currentReading?: number;
   consumption?: number;
+  /**
+   * The district's tariff for THIS stop's classification, resolved from the cached
+   * route. Undefined where the cache predates rates being served, or where the
+   * district has no schedule for this account's type — `calculateBill` then falls
+   * back to the app's placeholder table, and the screen says which it used.
+   */
+  rates?: RateSchedule;
+}
+
+/**
+ * The schedule that applies to one stop.
+ *
+ * Keyed on the district's own `accountType`, falling back to the receipt's
+ * `rateClass` lowercased — the two agree by construction (see `RATE_CLASS` in
+ * app-backend/controllers/accountController.js) and the fallback only matters for a
+ * row cached before `accountType` was sent.
+ */
+function ratesFor(
+  rates: RateSchedules | undefined,
+  account: RouteAccount
+): RateSchedule | undefined {
+  if (!rates) return undefined;
+  const key = (account.accountType || account.rateClass || '').toLowerCase();
+  return key ? rates[key] : undefined;
 }
 
 export interface BarangaySummary {
@@ -77,6 +103,12 @@ export interface RouteSnapshot {
    * zones" — an old cache cannot answer the question either way.
    */
   scope?: RouteScope;
+  /**
+   * The district's tariff for this route, or undefined on a cache that predates it.
+   * Undefined is not "no charge" — it is the app falling back to its placeholder
+   * rate table, which the receipt has to be able to say.
+   */
+  rates?: RateSchedules;
   /** True when the rows came off the cache because the network was not used or failed. */
   fromCache: boolean;
   /**
@@ -109,12 +141,20 @@ interface RouteResponse {
   accounts: RouteAccount[];
   barangays: BarangaySummary[];
   scope?: RouteScope;
+  rates?: RateSchedules;
 }
 
 interface RouteCache {
   accounts: RouteAccount[];
   barangays: BarangaySummary[];
   scope?: RouteScope;
+  /**
+   * The district's tariff, cached alongside the route because the receipt is
+   * printed in the same place the route is walked — offline. Undefined on a cache
+   * written before the server served rates; `calculateBill` falls back to the app's
+   * placeholder table in that case and says so. See shared/utils/billing-calculator.
+   */
+  rates?: RateSchedules;
 }
 
 /** Older installs cached a bare array, before barangays existed. */
@@ -125,6 +165,7 @@ function parseCache(raw: string): RouteCache {
     accounts: (parsed.accounts ?? []).map(normalise),
     barangays: parsed.barangays ?? [],
     scope: parsed.scope,
+    rates: parsed.rates,
   };
 }
 
@@ -183,12 +224,14 @@ export class RouteAccountService {
    * the phone" — which is a decision that needs to know the pull failed.
    */
   static async pull(): Promise<RouteCache> {
-    const { accounts, barangays, scope } = await apiFetch<RouteResponse>('/accounts/route');
-    const cache: RouteCache = { accounts: accounts.map(normalise), barangays, scope };
+    const { accounts, barangays, scope, rates } = await apiFetch<RouteResponse>('/accounts/route');
+    const cache: RouteCache = { accounts: accounts.map(normalise), barangays, scope, rates };
 
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
       await AsyncStorage.setItem(SYNCED_AT_KEY, Date.now().toString());
+      // The rows are current again, whatever this phone did to them before.
+      await AsyncStorage.removeItem(REFRESH_KEY);
     } catch {
       // Cache write failed; the list this call returns is still good for the
       // session. Losing the cache costs the next cold start, not this one.
@@ -200,6 +243,54 @@ export class RouteAccountService {
   /** The route saved on this phone. Empty — never invented — when there is none. */
   static async getCached(): Promise<RouteAccount[]> {
     return (await this.readCache()).accounts;
+  }
+
+  /** The district's tariff as this phone last had it, for the screens that bill offline. */
+  static async getCachedRates(): Promise<RateSchedules | undefined> {
+    return (await this.readCache()).rates;
+  }
+
+  /**
+   * Mark the cached route as needing a re-pull on the next read.
+   *
+   * ⚠️ THE ROUTE WENT STALE THE MOMENT A READING SYNCED, AND NOTHING SAID SO. The
+   * cache is served for six hours (`STALE_MS`), which is right for a list that
+   * changes when the office connects a meter — and wrong the instant this phone
+   * changes it. A reading that reaches TWD becomes the account's new previous
+   * reading, so until the next pull the detail screen measured against a figure its
+   * own collector had already replaced: ACC-2026-0007 was read to 150 at 13:23 on
+   * 2026-09-04 and the screen was still offering 103 from the 1st as the number to
+   * bill against.
+   *
+   * Clearing the timestamp rather than pulling here is deliberate. Sync runs in the
+   * background, possibly on the edge of signal, and the re-pull belongs to whoever
+   * next opens the route — where a failure is visible and `pullFailed` can say so.
+   */
+  static async invalidate(): Promise<void> {
+    try {
+      await AsyncStorage.setItem(REFRESH_KEY, '1');
+    } catch {
+      // The cache expires on the ordinary six-hour schedule instead. A missed
+      // refresh is not worth failing a completed sync over.
+    }
+  }
+
+  /**
+   * A flag of its own, rather than clearing `SYNCED_AT_KEY`.
+   *
+   * Deleting the timestamp would force the re-pull just as well and would also
+   * erase when the route was last downloaded — and that is the number the Route
+   * screen prints so a collector can judge how much to trust the list. A phone that
+   * pulled ten minutes ago would claim it had never had a route, which is the one
+   * thing on that screen a collector acts on. Staleness and provenance are two
+   * facts; they get two keys.
+   */
+  private static async needsRefresh(): Promise<boolean> {
+    try {
+      return (await AsyncStorage.getItem(REFRESH_KEY)) !== null;
+    } catch {
+      return false;
+    }
   }
 
   private static async readCache(): Promise<RouteCache> {
@@ -233,7 +324,8 @@ export class RouteAccountService {
    */
   static async list({ force = false }: { force?: boolean } = {}): Promise<RouteSnapshot> {
     const before = await this.syncedAt();
-    const stale = before === null || Date.now() - before > STALE_MS;
+    const stale =
+      before === null || Date.now() - before > STALE_MS || (await this.needsRefresh());
 
     let cache: RouteCache | null = null;
     let pullFailed = false;
@@ -257,7 +349,13 @@ export class RouteAccountService {
     const today = localDateKey();
     const byAccount = new Map<
       string,
-      { currentReading: number; consumption: number; synced: boolean }
+      {
+        currentReading: number;
+        consumption: number;
+        synced: boolean;
+        readingDate: string;
+        timestamp: number;
+      }
     >();
 
     for (const r of readings) {
@@ -279,12 +377,37 @@ export class RouteAccountService {
        * readings for one meter, on the phone whose whole job is to record it once.
        */
       if (r.readingDate !== today && r.synced) continue;
-      // Last write wins: a re-read of the same meter is a correction, and the
-      // outbox is appended to in order, so the newest record is the last one seen.
+
+      /**
+       * The LATEST reading wins, by when it was taken — not by where it sits in the
+       * array.
+       *
+       * This was "last one seen", on the reasoning that the outbox is appended to in
+       * order. It is, by `saveMeterReading` — and `mergeSyncedMeterReadings` also
+       * appends, a whole history at a time, pulled back from the server after a
+       * reinstall or onto a second handset. Those arrive in the server's order and
+       * land after everything already stored, so an older reading could be the last
+       * one seen for an account and win, and the screen would offer a superseded
+       * figure as this meter's current reading.
+       *
+       * Comparing `timestamp` — the phone's clock at the meter, the same key the
+       * server resolves a meter-month by — makes the answer independent of how the
+       * records got onto this phone. Date breaks a tie first so a record with no
+       * usable timestamp still orders by the day it was taken.
+       */
+      const held = byAccount.get(r.accountNumber);
+      const newer =
+        !held ||
+        r.readingDate > held.readingDate ||
+        (r.readingDate === held.readingDate && (r.timestamp ?? 0) >= held.timestamp);
+      if (!newer) continue;
+
       byAccount.set(r.accountNumber, {
         currentReading: r.currentReading,
         consumption: r.consumption,
         synced: r.synced,
+        readingDate: r.readingDate,
+        timestamp: r.timestamp ?? 0,
       });
     }
 
@@ -301,6 +424,7 @@ export class RouteAccountService {
           state: !reading ? 'unread' : reading.synced ? 'done' : 'pending',
           currentReading: reading?.currentReading,
           consumption: reading?.consumption,
+          rates: ratesFor(cache.rates, account),
         } satisfies RouteAccountRow;
       })
       .sort((a, b) => a.sequence - b.sequence);
@@ -311,6 +435,7 @@ export class RouteAccountService {
       // sent a summary; the two agree, because both count the same list.
       barangays: cache.barangays.length ? cache.barangays : summarise(cache.accounts),
       scope: cache.scope,
+      rates: cache.rates,
       syncedAt: fromCache ? before : await this.syncedAt(),
       fromCache,
       pullFailed,

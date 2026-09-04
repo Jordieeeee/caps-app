@@ -79,15 +79,33 @@ export function WaterUsageCard({ usage }: { usage: RecentUsage }) {
         </ThemedText>
       </View>
 
+      {/* Three subtitles for three different single-month situations, because
+          "One billed month on record" is a claim about the ACCOUNT and is false as
+          soon as a month filter is what reduced the window to one. Saying it there
+          would tell a household with a year of bills that TWD holds a single month
+          of them — and the filter that caused it is a chip row further down the
+          screen, so nothing on screen would correct the impression. */}
       <ThemedText type="small" themeColor="textSecondary">
         {usage.months.length > 1
           ? `Averaging ${formatCuM(usage.averageCuM)} a month`
-          : 'One billed month on record'}
+          : usage.scopedToPeriod
+            ? 'Showing one month. Clear the month filter to compare.'
+            : 'One billed month on record'}
       </ThemedText>
 
       <View style={styles.rows}>
         {usage.months.map((month, index) => {
           const isLatest = index === usage.months.length - 1;
+          /**
+           * The bar is a COMPARISON, so it is drawn only when there is something
+           * to compare against. A lone month is its own `peakCuM` and fills the
+           * track edge to edge whatever the reading — the widest, heaviest element
+           * on this screen, carrying no information and implying a maximum the
+           * household has not hit. The month and its figure still line up in the
+           * same columns, so the row reads identically the day a second bill
+           * arrives and the bars become worth drawing.
+           */
+          const comparable = usage.months.length > 1;
           return (
             <View key={month.billingPeriod} style={styles.row}>
               <ThemedText
@@ -97,18 +115,22 @@ export function WaterUsageCard({ usage }: { usage: RecentUsage }) {
                 numberOfLines={1}>
                 {formatBillingPeriod(month.billingPeriod)}
               </ThemedText>
-              <View style={[styles.track, { backgroundColor: theme.backgroundSelected }]}>
-                <View
-                  style={[
-                    styles.bar,
-                    {
-                      backgroundColor: theme.primary,
-                      opacity: isLatest ? 1 : 0.55,
-                      width: barWidth(month.cubicMetres, usage.peakCuM),
-                    },
-                  ]}
-                />
-              </View>
+              {comparable ? (
+                <View style={[styles.track, { backgroundColor: theme.backgroundSelected }]}>
+                  <View
+                    style={[
+                      styles.bar,
+                      {
+                        backgroundColor: theme.primary,
+                        opacity: isLatest ? 1 : 0.55,
+                        width: barWidth(month.cubicMetres, usage.peakCuM),
+                      },
+                    ]}
+                  />
+                </View>
+              ) : (
+                <View style={styles.track} />
+              )}
               <ThemedText
                 type={isLatest ? 'smallBold' : 'small'}
                 style={styles.rowValue}
@@ -178,8 +200,20 @@ export function WaterUsageSummary({ usage }: { usage: RecentUsage }) {
         {formatCuM(usage.totalCuM)}
       </ThemedText>
 
-      {/* Sparkline: columns, because three months read left-to-right as time. The
-          month initials sit under them so the shape is never the only label. */}
+      {/**
+       * Sparkline: columns, because three months read left-to-right as time. The
+       * month initials sit under them so the shape is never the only label.
+       *
+       * ⚠️ NOT DRAWN FOR A SINGLE MONTH. Every bar here is scaled against
+       * `peakCuM`, and with one month that month IS the peak — so it renders full
+       * height, every time, whatever the household used. A chart whose only shape
+       * is "100%" encodes nothing and misreads as a gauge pinned at maximum, which
+       * on a water bill is an alarming thing to say by accident. The figure above
+       * and the period below already carry the whole story at that point; the
+       * chart earns its space on the second bill, when there is a comparison to
+       * make.
+       */}
+      {usage.months.length > 1 && (
       <View style={styles.spark} accessibilityElementsHidden importantForAccessibility="no">
         {usage.months.map((month, index) => (
           <View key={month.billingPeriod} style={styles.sparkColumn}>
@@ -201,6 +235,7 @@ export function WaterUsageSummary({ usage }: { usage: RecentUsage }) {
           </View>
         ))}
       </View>
+      )}
 
       {/* Just the change — the sparkline's last column already says which month is
           being talked about, and "July 2026: 12 m³ less than June 2026" spends two

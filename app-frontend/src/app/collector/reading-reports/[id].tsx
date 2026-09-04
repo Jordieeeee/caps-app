@@ -29,6 +29,7 @@ import {
   calculateBill,
   dueDateFor,
   invoiceNumberFor,
+  usingDistrictRates,
   type ReceiptInvoice,
 } from '@/shared/utils/billing-calculator';
 
@@ -155,7 +156,20 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
           : null;
 
   const valid = current !== null && !error && consumption !== null;
-  const bill = useMemo(() => (valid ? calculateBill(consumption!) : null), [valid, consumption]);
+  /**
+   * Priced from the district's own tariff, pulled down with the route.
+   *
+   * `account.rates` is undefined only on a handset whose cached route predates the
+   * server serving rates, and `calculateBill` then falls back to the placeholder
+   * table it always used. That fallback prints a number TWD does not charge — see
+   * the block comment in shared/utils/billing-calculator — so the screen says so
+   * rather than letting the collector hand it over as the district's figure.
+   */
+  const bill = useMemo(
+    () => (valid ? calculateBill(consumption!, account.rates) : null),
+    [valid, consumption, account.rates]
+  );
+  const officialRates = usingDistrictRates(account.rates);
   const implausible = valid && consumption! > IMPLAUSIBLE_CONSUMPTION;
 
   /**
@@ -351,7 +365,11 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
             <ThemedText type="defaultBold">This bill</ThemedText>
             <BillRow label="Consumption" value={`${consumption} m³`} />
             <BillRow label="Basic charge" value={formatPeso(bill.basicCharge)} />
-            <BillRow label="VAT (12%)" value={formatPeso(bill.vat)} />
+            {/* Only where it was actually charged. The district's own schedule is
+                applied without a VAT uplift — see calculateBill — so printing a
+                ₱0.00 VAT line against it would read as a rate of zero rather than
+                as a line that does not apply. */}
+            {!officialRates && <BillRow label="VAT (12%)" value={formatPeso(bill.vat)} />}
 
             <View style={[styles.totalRow, { borderTopColor: theme.border }]}>
               <ThemedText type="defaultBold">TOTAL DUE</ThemedText>
@@ -367,6 +385,29 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
             <ThemedText type="small" themeColor="textSecondary">
               Due {dueDateFor(readingDate)}. The printed receipt shows the full breakdown.
             </ThemedText>
+
+            {/**
+             * A receipt priced from the app's placeholder table is not the
+             * district's bill, and the collector about to hand it over is the only
+             * person who can act on that. It happens on a handset that has not
+             * pulled a route since rates were served — a pull-to-refresh on the
+             * Route screen fixes it, which is why the sentence says so.
+             */}
+            {!officialRates && (
+              <View
+                style={[
+                  styles.warning,
+                  { borderColor: theme.warning, backgroundColor: theme.warningSurface },
+                ]}
+                accessibilityRole="alert">
+                <Icon name="alert-triangle" size={18} color={theme.warning} />
+                <ThemedText type="small" style={[styles.warningText, { color: theme.warning }]}>
+                  This phone has not downloaded TWD&apos;s rates yet, so the amount above uses the
+                  app&apos;s placeholder table and will not match the office. Refresh your route
+                  where you have signal before printing.
+                </ThemedText>
+              </View>
+            )}
           </ThemedView>
         </ScreenSection>
       )}
