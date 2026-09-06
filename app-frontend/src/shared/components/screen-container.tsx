@@ -160,6 +160,20 @@ const styles = StyleSheet.create({
   container: {
     maxWidth: MaxContentWidth,
     flexGrow: 1,
+    /**
+     * ⚠️ WITHOUT THIS, NARROW PHONES CLIP THE CONTENT ON BOTH EDGES.
+     *
+     * The parent is a row with `justifyContent: 'center'`, and Yoga defaults
+     * `flexShrink` to 0. So when a screen's intrinsic width exceeds the
+     * viewport — Home does it with the greeting + calendar button on one row,
+     * and again with `Total due · 2 bills · 2 accounts · Due in 8 days` — this
+     * view keeps its over-wide content size instead of shrinking to fit, and
+     * the centring splits the overflow evenly off the left AND right edges.
+     * The tell is a heading missing its first letter while a trailing control
+     * is missing its last: not one runaway child, but the whole column drawn
+     * too wide and centred. Invisible on a tablet, where maxWidth binds first.
+     */
+    flexShrink: 1,
   },
   section: {
     paddingHorizontal: Spacing.four,

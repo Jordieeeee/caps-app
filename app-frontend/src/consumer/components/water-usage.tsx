@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { changeLabel, formatCuM, type RecentUsage } from '@/consumer/lib/usage-summary';
 import { Icon } from '@/shared/components/icon';
-import { formatBillingPeriod } from '@/shared/format/date';
+import { formatBillingPeriod, formatBillingPeriodShort } from '@/shared/format/date';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { Radius, Spacing } from '@/shared/theme/twd';
 
@@ -113,7 +113,7 @@ export function WaterUsageCard({ usage }: { usage: RecentUsage }) {
                 themeColor={isLatest ? 'text' : 'textSecondary'}
                 style={styles.rowMonth}
                 numberOfLines={1}>
-                {formatBillingPeriod(month.billingPeriod)}
+                {formatBillingPeriodShort(month.billingPeriod)}
               </ThemedText>
               {comparable ? (
                 <View style={[styles.track, { backgroundColor: theme.backgroundSelected }]}>

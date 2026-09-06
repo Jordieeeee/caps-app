@@ -86,6 +86,13 @@ export function TwdButton({
         // Glass rides on the pressed state only — that is the state it signals.
         <ActiveGlassSurface active={pressed && !inert} radius={Radius.pill}>
           <View
+            /**
+             * Pinned as a real native view — see the note in
+             * active-glass-surface.tsx. This is the view the device named as 6102:
+             * Fabric flattened it out from under its own ActivityIndicator and
+             * label when the button went busy, and the re-parent crashed Android.
+             */
+            collapsable={false}
             style={[
               styles.body,
               {

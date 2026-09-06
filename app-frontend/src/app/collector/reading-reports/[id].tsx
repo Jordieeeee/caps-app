@@ -57,9 +57,36 @@ export default function MeterReadingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { state, reload, refresh, refreshing } = useAsync(useCallback(() => RouteAccountService.get(id), [id]));
 
+  const loaded = state.status === 'ready' ? state.data : null;
+
   return (
-    <ScreenContainer variant="stack" onRefresh={() => void refresh()} refreshing={refreshing}>
-      {state.status === 'loading' && (
+    <>
+      {/**
+       * ⚠️ AT THE SCREEN'S TOP LEVEL, NOT INSIDE THE FORM. DO NOT MOVE IT BACK.
+       *
+       * This used to be rendered by `ReadingForm`, which lives inside
+       * ScreenContainer's ScrollView content AND behind the `status === 'ready'`
+       * conditional below. So the moment the account loaded, one commit both
+       * swapped the scroll view's children (skeleton out, several sections in)
+       * and pushed a navigator options update from inside that same commit.
+       * Mutating navigation state from within the content react-native-screens is
+       * re-parenting is how a screen's JS tree and its native views end up
+       * disagreeing, which surfaces on Android as `addViewAt: … The specified
+       * child already has a parent`.
+       *
+       * Here it is a sibling of the content and renders on every status, so the
+       * header is configured once by the screen rather than by whatever happens to
+       * be mounted inside it.
+       *
+       * The account number, not "Meter Reading" — a collector at a gate knows what
+       * screen they opened and needs to confirm which meter it is for. It arrives
+       * with the data, exactly as before; until then the header carries the
+       * generic title rather than a stale account number.
+       */}
+      <Stack.Screen options={{ title: loaded ? loaded.accountNumber : 'Meter reading' }} />
+
+      <ScreenContainer variant="stack" onRefresh={() => void refresh()} refreshing={refreshing}>
+        {state.status === 'loading' && (
         <ScreenSection>
           <SkeletonList count={2} label="Loading account" />
         </ScreenSection>
@@ -84,8 +111,9 @@ export default function MeterReadingScreen() {
         </ScreenSection>
       )}
 
-      {state.status === 'ready' && state.data && <ReadingForm account={state.data} />}
-    </ScreenContainer>
+        {loaded && <ReadingForm account={loaded} />}
+      </ScreenContainer>
+    </>
   );
 }
 
@@ -230,8 +258,17 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
   const saveAndPrint = useCallback(async () => {
     const invoice = await save();
     if (!invoice) return;
-    await print(() => PrinterService.printInvoice(invoice, account));
-    router.back();
+    /**
+     * Not `router.back()` unconditionally.
+     *
+     * `print` resolves 'navigated' when the collector chose "Printer settings"
+     * from a failure dialog and the hook has already pushed that screen. Popping
+     * on top of that push would tear this screen down under a screen that was
+     * just mounted — the exact navigator race that crashed Fabric's mounting
+     * layer here before (see use-print.ts).
+     */
+    const outcome = await print(() => PrinterService.printInvoice(invoice, account));
+    if (outcome !== 'navigated') router.back();
   }, [save, print, account, router]);
 
   const saveOnly = useCallback(async () => {
@@ -267,10 +304,6 @@ function ReadingForm({ account }: { account: RouteAccountRow }) {
 
   return (
     <>
-      {/* The account number, not "Meter Reading" — a collector at a gate knows what
-          screen they opened and needs to confirm which meter it is for. */}
-      <Stack.Screen options={{ title: account.accountNumber }} />
-
       <ScreenSection gap={Spacing.two}>
         <View style={styles.titleRow}>
           <ThemedText type="defaultBold" style={styles.consumerName} numberOfLines={2}>

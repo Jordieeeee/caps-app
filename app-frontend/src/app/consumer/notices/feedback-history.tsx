@@ -1,5 +1,5 @@
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useRef } from 'react';
+import { useRouter } from 'expo-router';
+import { useCallback } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -13,6 +13,7 @@ import { ScreenContainer, ScreenSection } from '@/shared/components/screen-conta
 import { FeedbackBadge } from '@/shared/components/status-badge';
 import { formatDate } from '@/shared/format/date';
 import { useAsync } from '@/shared/hooks/use-async';
+import { useRefreshOnFocus } from '@/shared/hooks/use-refresh-on-focus';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { Radius, Spacing } from '@/shared/theme/twd';
 
@@ -44,16 +45,7 @@ export default function ConsumerFeedbackHistoryScreen() {
    *
    * First focus skipped: useAsync already loads on mount.
    */
-  const settledFirstFocus = useRef(false);
-  useFocusEffect(
-    useCallback(() => {
-      if (!settledFirstFocus.current) {
-        settledFirstFocus.current = true;
-        return;
-      }
-      void refresh();
-    }, [refresh])
-  );
+  useRefreshOnFocus(refresh);
 
   return (
     <ScreenContainer variant="stack" onRefresh={() => void refresh()} refreshing={refreshing}>

@@ -167,7 +167,34 @@ export default function CollectorLayout() {
           from connectivity alone rather than defaulted to something cheerful.
           See types/auth.ts — googleSignedIn carries no `sync` field, and this
           is deliberately not the place to invent one. */}
-      {bannerVisible && sync && <SessionStatusBanner sync={sync} />}
+      {/**
+       * ⚠️ THE SLOT IS ALWAYS MOUNTED. DO NOT COLLAPSE THIS BACK TO
+       * `{bannerVisible && <SessionStatusBanner />}`.
+       *
+       * That form mounts and unmounts a sibling ABOVE the whole tab navigator, so
+       * every time connectivity flips, the content subtree's index in this
+       * container shifts between 0 and 1. Fabric answers an index shift by moving
+       * the existing views into a newly-created parent, and Android refuses:
+       *
+       *     addViewAt: failed to insert view [4158] into parent [4164] at index 2
+       *     Caused by: The specified child already has a parent.
+       *
+       * The tell is that the child's tag is always LOWER than the parent's — a view
+       * that already existed being re-parented, not a fresh mount.
+       *
+       * Why it reads as a printing bug: the PT-210 is Bluetooth, and BLE shares the
+       * 2.4GHz radio with wifi. Printing a receipt is one of the few things a
+       * collector does that reliably drops the connection for a moment, so
+       * `bannerVisible` flips right after the paper comes out — every time, on a
+       * screen the collector is about to navigate away from.
+       *
+       * An always-mounted wrapper keeps this container's native child list at a
+       * constant length and constant order. It collapses to zero height when there
+       * is nothing to say, so it costs no space and changes nothing visually.
+       */}
+      <View style={styles.bannerSlot}>
+        {bannerVisible && sync ? <SessionStatusBanner sync={sync} /> : null}
+      </View>
       {/* Identity resolves ONCE for the whole shell rather than per screen.
           Six collector screens need the same employment record, and for a
           Google collector it arrives over the network — six independent loads
@@ -185,5 +212,11 @@ export default function CollectorLayout() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  /**
+   * No height of its own — it is exactly as tall as the banner inside it, and zero
+   * when empty. Its only job is to exist, so the navigator below keeps a fixed
+   * index whether or not there is a banner. See the note at the call site.
+   */
+  bannerSlot: {},
   content: { flex: 1 },
 });

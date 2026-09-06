@@ -120,10 +120,27 @@ export default function RootLayout() {
   return (
     <ThemePreferenceProvider>
       <NavigationTheme>
-        <AnimatedSplashOverlay />
         <AuthProvider>
           <RootNavigator />
         </AuthProvider>
+        {/**
+         * ⚠️ LAST, NOT FIRST. IT UNMOUNTS ITSELF, AND ORDER DECIDES WHAT THAT COSTS.
+         *
+         * The overlay returns null once its animation finishes. As the FIRST child
+         * that removal shifted the navigator's index from 1 to 0, and Fabric
+         * answers an index shift by moving the existing views into a newly-created
+         * parent — which Android rejects with `addViewAt: … The specified child
+         * already has a parent`. Removing the LAST child shifts nobody.
+         *
+         * Costs nothing visually: the overlay is `position: absolute` with
+         * `zIndex: 1000` (see animated-icon.tsx), so it covers the app either way,
+         * and being last is if anything the more honest way to say "on top".
+         *
+         * Same defect, same fix, as the offline banner in collector/_layout.tsx —
+         * that one could not be reordered because it genuinely occupies space, so
+         * it keeps an always-mounted slot instead.
+         */}
+        <AnimatedSplashOverlay />
       </NavigationTheme>
     </ThemePreferenceProvider>
   );

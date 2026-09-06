@@ -69,10 +69,17 @@ export function ServiceOrderAction({ kind }: { kind: NoticeKind }) {
   const { state, reload } = useAsync(useCallback(() => ServiceOrderService.get(kind, id), [kind, id]));
 
   return (
-    <ScreenContainer variant="stack">
+    <>
+      {/* A sibling of the content, not a child of it — see the note in
+          reading-reports/[id].tsx. Navigation config announced from inside the
+          scroll view that react-native-screens is re-parenting is how the JS tree
+          and the native views end up disagreeing. Harmless here today (the title
+          is static, so it settles on mount), kept consistent so the dangerous
+          version cannot creep back in by copying this file. */}
       <Stack.Screen options={{ title: COPY[kind].title }} />
 
-      {state.status === 'loading' && (
+      <ScreenContainer variant="stack">
+        {state.status === 'loading' && (
         <ScreenSection>
           <SkeletonList count={2} label="Loading order" />
         </ScreenSection>
@@ -94,8 +101,9 @@ export function ServiceOrderAction({ kind }: { kind: NoticeKind }) {
         </ScreenSection>
       )}
 
-      {state.status === 'ready' && state.data && <ActionForm kind={kind} order={state.data} />}
-    </ScreenContainer>
+        {state.status === 'ready' && state.data && <ActionForm kind={kind} order={state.data} />}
+      </ScreenContainer>
+    </>
   );
 }
 
@@ -155,8 +163,10 @@ function ActionForm({ kind, order }: { kind: NoticeKind; order: ServiceOrderRow 
     setSaving(true);
     try {
       const confirmedAt = await ServiceOrderService.confirm(order, note);
-      await print(() => PrinterService.printServiceNotice(notice(confirmedAt)));
-      router.back();
+      // See the note in reading-reports/[id].tsx: 'navigated' means the hook has
+      // already pushed the printer screen, so popping here would fight it.
+      const outcome = await print(() => PrinterService.printServiceNotice(notice(confirmedAt)));
+      if (outcome !== 'navigated') router.back();
     } catch {
       setError('Could not save this order to the phone. Try again before leaving the site.');
     } finally {

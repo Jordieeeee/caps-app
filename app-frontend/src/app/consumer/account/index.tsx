@@ -1,5 +1,5 @@
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -25,6 +25,7 @@ import { ThemeToggle } from '@/shared/components/theme-toggle';
 import { TwdButton } from '@/shared/components/twd-button';
 import { formatPeso } from '@/shared/format/currency';
 import { useAsync } from '@/shared/hooks/use-async';
+import { useRefreshOnFocus } from '@/shared/hooks/use-refresh-on-focus';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { Radius, Spacing } from '@/shared/theme/twd';
 
@@ -84,16 +85,7 @@ export default function ConsumerAccountScreen() {
    * The first focus is skipped because useAsync already loads on mount. Both
    * firing meant two identical round trips every time the tab was opened cold.
    */
-  const settledFirstFocus = useRef(false);
-  useFocusEffect(
-    useCallback(() => {
-      if (!settledFirstFocus.current) {
-        settledFirstFocus.current = true;
-        return;
-      }
-      void refresh();
-    }, [refresh])
-  );
+  useRefreshOnFocus(refresh);
 
   const data = state.status === 'ready' ? state.data : null;
 
@@ -666,10 +658,10 @@ function AccountCard({ account }: { account: Account }) {
        */}
       {account.latestReading && (
         <View style={[styles.balanceRow, { borderTopColor: theme.border }]}>
-          <ThemedText type="small" themeColor="textSecondary">
+          <ThemedText type="small" themeColor="textSecondary" style={styles.balanceRowText}>
             Meter read {formatDate(account.latestReading.readingDate)}
           </ThemedText>
-          <ThemedText type="small">
+          <ThemedText type="small" style={styles.balanceRowText}>
             {account.latestReading.consumption !== null
               ? `${account.latestReading.consumption} m³ · not yet billed`
               : 'Not yet billed'}
@@ -780,11 +772,32 @@ const styles = StyleSheet.create({
   address: { lineHeight: 20 },
   balanceRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    // flex-start, not center: once either side wraps, centring floats the short
+    // side in the middle of the tall one.
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
+    /**
+     * ⚠️ THE GAP IS LEAD, NOT PADDING. `space-between` puts the slack BETWEEN the
+     * two children — and when there is no slack it puts none, so the two texts
+     * butt straight up against each other and read as one word. That is how
+     * `Meter read 4 Sep 2026` and `98 m³ · not yet billed` rendered as
+     * `4 Sep 202698 m³`, with no character between them to show where the date
+     * ended.
+     */
+    gap: Spacing.two,
     paddingTop: Spacing.three,
     borderTopWidth: 1,
   },
+  /**
+   * Both sides shrink, so a row that cannot fit wraps inside the card instead of
+   * running past its edge.
+   *
+   * Yoga defaults `flexShrink` to 0, which is the same default that clipped the
+   * screen shell and the Home summary row. Here it sent `not yet billed` off the
+   * right edge of the account card entirely. Neither side is the obvious one to
+   * sacrifice — the date and the reading are equally the point — so both give.
+   */
+  balanceRowText: { flexShrink: 1 },
   limitNote: {
     flexDirection: 'row',
     alignItems: 'flex-start',

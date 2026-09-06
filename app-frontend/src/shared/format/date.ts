@@ -47,6 +47,26 @@ export function formatBillingPeriod(period: string): string {
 }
 
 /**
+ * `Jul 2026` — the same period, for a fixed-width column.
+ *
+ * The usage card lists each month against a comparison bar, and those bars only
+ * line up because the label column is a fixed 84dp gutter. `September 2026` is
+ * wider than that at any readable size, so the full form rendered as
+ * `September 2…` — a label that has lost the year it was carrying. Abbreviating
+ * keeps the year, which is the part a household needs when a list crosses a
+ * December.
+ *
+ * Use `formatBillingPeriod` anywhere the label has the width for it; this is for
+ * the constrained case only.
+ */
+export function formatBillingPeriodShort(period: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(period);
+  if (!match) return period;
+  const month = MONTHS[Number(match[2]) - 1];
+  return month ? `${month} ${match[1]}` : period;
+}
+
+/**
  * Today, as the calendar on the wall in Tanauan has it: `YYYY-MM-DD`, local.
  *
  * ⚠️ NOT `new Date().toISOString().split('T')[0]`, which is what four call sites

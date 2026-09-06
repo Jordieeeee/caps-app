@@ -295,7 +295,7 @@ function BillSummaryCard({ bills }: { bills: Bill[] }) {
         },
       ]}>
       <View style={styles.summaryTop}>
-        <ThemedText type="small" themeColor="textSecondary">
+        <ThemedText type="small" themeColor="textSecondary" style={styles.summaryLabel}>
           {outstanding.length === 1
             ? 'Total due'
             : accountsDue > 1
@@ -585,14 +585,30 @@ const styles = StyleSheet.create({
   },
   summaryTop: {
     flexDirection: 'row',
-    alignItems: 'center',
+    // flex-start, not center: the label wraps to two lines on a narrow phone and
+    // centring it against the single-line due chip leaves the chip floating in
+    // the middle of the block. Both read from the same top edge instead.
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: Spacing.two,
   },
+  /**
+   * Shrinks so the due date never gets pushed off the card.
+   *
+   * Yoga defaults `flexShrink` to 0, so without this BOTH children of a
+   * space-between row hold their full intrinsic width and the row overflows its
+   * own padding — `Total due · 2 bills · 2 accounts` plus `Due in 8 days` does
+   * not fit 360dp, and the days fell off the right edge. The label is the half
+   * that gives: it describes what the number is, while the due date is the thing
+   * a household is actually here to find out.
+   */
+  summaryLabel: { flexShrink: 1 },
   dueRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.one,
+    // Never the one that gives way; see summaryLabel.
+    flexShrink: 0,
   },
   // fontSize with its own lineHeight. Inheriting `title`'s 52px box onto a
   // smaller glyph is what wrapped the collector's currency tiles into overlapping
