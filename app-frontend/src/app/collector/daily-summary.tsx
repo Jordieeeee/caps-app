@@ -709,7 +709,21 @@ const styles = StyleSheet.create({
   },
   readingHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    /**
+     * ⚠️ `flex-start`, NOT `center`, BECAUSE THE BADGE DOES NOT NEGOTIATE.
+     *
+     * `Badge` sets `alignSelf: 'flex-start'` in its own stylesheet (see
+     * shared/components/status-badge.tsx) — sensible on its own, since a badge
+     * beside a paragraph should hug the first line rather than float against the
+     * middle of it. But `alignSelf` beats the row's `alignItems`, so this header
+     * centred its two-line account block and its 44dp receipt button while the
+     * badge stayed pinned to the top, and the three sat on three different edges.
+     *
+     * Aligning the row to the edge the badge already keeps makes them agree
+     * instead of compete: the account number, the receipt button and the status
+     * all start flush at the top of the card.
+     */
+    alignItems: 'flex-start',
     gap: Spacing.two,
   },
   readingHeaderText: { flex: 1 },

@@ -415,7 +415,10 @@ function OrderLink({
       <ThemedText type="defaultBold" style={styles.orderLinkLabel}>
         {label}
       </ThemedText>
-      <ThemedText type="small" style={{ color: accent }} numberOfLines={1}>
+      <ThemedText
+        type="small"
+        style={[styles.orderLinkDetail, { color: accent }]}
+        numberOfLines={1}>
         {detail}
       </ThemedText>
       <Icon name="chevron-right" size={18} color={theme.textSecondary} />
@@ -623,7 +626,22 @@ const styles = StyleSheet.create({
     borderRadius: Radius.card,
     borderWidth: 2,
   },
-  orderLinkLabel: { flex: 1 },
+  /**
+   * ⚠️ THE LABEL NEVER GIVES WAY; THE DETAIL DOES. THIS WAS `flex: 1` AND BACKWARDS.
+   *
+   * `flex: 1` sets `flexBasis: 0`, so the label grew only into whatever was left
+   * after "Delinquent accounts" had taken its full intrinsic width — and when that
+   * was not enough it wrapped mid-word, rendering the two links as "Reconnecti /
+   * ons" and "Discon / nection / s".
+   *
+   * The label names where the row goes; the detail says how many are waiting. If
+   * one of them has to degrade it is the second, and it can do it gracefully
+   * because it already carries `numberOfLines={1}` and ellipsises. So the label
+   * sizes to its content and refuses to shrink, and the detail absorbs every bit
+   * of pressure the row is under.
+   */
+  orderLinkLabel: { flexShrink: 0 },
+  orderLinkDetail: { flexGrow: 1, flexShrink: 1, textAlign: 'right' },
   group: { gap: Spacing.three },
   heading: {
     flexDirection: 'row',

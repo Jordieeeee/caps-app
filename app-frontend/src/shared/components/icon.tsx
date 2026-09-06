@@ -53,7 +53,15 @@ export type IconName =
   | 'file-chart'
   | 'droplet'
   | 'trending-up'
-  | 'trending-down';
+  | 'trending-down'
+  /* Tab-bar glyphs. Drawn here rather than taken from the OS because the Android
+     bar is now a React view (see app-tab-bar.tsx), and a JS bar cannot render
+     platform images. Shapes deliberately track the Material outline icons they
+     replace — `folder`, `notifications`, `more_horiz` — so the bar a collector
+     already knows does not change under them. */
+  | 'folder'
+  | 'bell'
+  | 'more-horizontal';
 
 interface IconProps {
   name: IconName;
@@ -65,6 +73,16 @@ interface IconProps {
    */
   color?: string;
   /**
+   * Stroke weight, in dp. Defaults to 2 — the weight the whole set is drawn at.
+   *
+   * Exists so a selected state can carry WEIGHT as well as colour. This set is
+   * stroked rather than filled, so it has no outline/filled pair the way SF
+   * Symbols and Material do; thickening the stroke is the same signal by the only
+   * means this set has. Keep the change small — 2.4 reads as emphasis, 3 reads as
+   * a different icon.
+   */
+  strokeWidth?: number;
+  /**
    * Icons are decorative by default: they sit beside a text label that already
    * says what they mean, and announcing both makes a screen reader repeat itself.
    * Pass a label only for an icon that is the *sole* carrier of meaning.
@@ -72,13 +90,13 @@ interface IconProps {
   label?: string;
 }
 
-export function Icon({ name, size = 24, color, label }: IconProps) {
+export function Icon({ name, size = 24, color, strokeWidth = 2, label }: IconProps) {
   const theme = useTwdTheme();
   const stroke = color ?? theme.text;
 
   const common: Common = {
     stroke,
-    strokeWidth: 2,
+    strokeWidth,
     strokeLinecap: 'round',
     strokeLinejoin: 'round',
     fill: 'none',
@@ -278,6 +296,28 @@ function glyph(name: IconName, c: Common) {
         <>
           <Polyline points="22 12 16 12 14 15 10 15 8 12 2 12" {...c} />
           <Path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z" {...c} />
+        </>
+      );
+    // ── Tab-bar glyphs ──────────────────────────────────────────────────────
+    case 'folder':
+      return (
+        <>
+          <Path d="M4 20a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2Z" {...c} />
+        </>
+      );
+    case 'bell':
+      return (
+        <>
+          <Path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" {...c} />
+          <Path d="M13.7 21a2 2 0 0 1-3.4 0" {...c} />
+        </>
+      );
+    case 'more-horizontal':
+      return (
+        <>
+          <Circle cx={5} cy={12} r={1} {...c} />
+          <Circle cx={12} cy={12} r={1} {...c} />
+          <Circle cx={19} cy={12} r={1} {...c} />
         </>
       );
     case 'user':

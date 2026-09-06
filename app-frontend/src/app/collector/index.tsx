@@ -14,6 +14,7 @@ import { ScreenContainer, ScreenSection } from '@/shared/components/screen-conta
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { SkeletonBlock } from '@/shared/components/skeleton';
 import { TwdButton } from '@/shared/components/twd-button';
+import { useRefreshOnChange } from '@/collector/hooks/use-refresh-on-change';
 import { useAsync } from '@/shared/hooks/use-async';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 import { MIN_TAP_TARGET, Radius, Spacing } from '@/shared/theme/twd';
@@ -88,6 +89,19 @@ export default function CollectorHome() {
   const router = useRouter();
   const theme = useTwdTheme();
   const { state, reload, refresh, refreshing } = useAsync(useCallback(() => loadToday(), []));
+
+  /**
+   * ⚠️ HOME WAS THE ONE COLLECTOR SCREEN THAT NEVER RE-READ ITSELF.
+   *
+   * Every other list calls this hook; this one loaded on mount and then stood
+   * still until a pull-to-refresh or a relaunch. That is the wrong screen to leave
+   * stale: the card a collector actually watches is "N records waiting", and after
+   * a sync drained the outbox Home still read "7 records waiting · Last sent
+   * 18:03" while Route and Summary both correctly showed none. A count of work
+   * that has already reached TWD is worse than no count — it sends a collector
+   * back to the office to chase records that are not missing.
+   */
+  useRefreshOnChange(refresh);
 
   /**
    * The round this collector actually walks is their barangay zone, not a routeId.

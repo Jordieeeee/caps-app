@@ -409,11 +409,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingBottom: Spacing.four,
   },
+  /**
+   * The primary takes the slack; the secondary takes exactly its own label.
+   *
+   * ⚠️ THIS WAS `flex: 2` / `flex: 1`, AND THAT RATIO CANNOT KNOW HOW WIDE A WORD
+   * IS. A third of a 411dp row, less the row padding and the button's own
+   * horizontal padding, left under 90dp for "Refresh" — so it wrapped, mid-word,
+   * as "Refre / sh". A ratio is a guess about text width, and it is wrong the
+   * moment the label changes or the reader turns their font size up, which on a
+   * public utility's app they will.
+   *
+   * Sizing the secondary to its content cannot wrap: the button is as wide as the
+   * word plus its padding, whatever the font scale, and `flexShrink: 0` stops the
+   * row squeezing it back down. Yoga defaults `flexShrink` to 0 already — it is
+   * stated because that default is doing load-bearing work here, not because it
+   * needs setting.
+   */
   syncButton: {
-    flex: 2,
+    flex: 1,
   },
   refreshButton: {
-    flex: 1,
+    flexShrink: 0,
   },
   offlineNote: {
     flexDirection: 'row',

@@ -1,17 +1,5 @@
-import { NativeTabs } from 'expo-router/unstable-native-tabs';
-
 import { useUnreadNoticeCount } from '@/consumer/services/notice-unread';
-import AppTabs from '@/shared/components/app-tabs';
-
-/**
- * Above this, the badge stops being a count and becomes "a lot".
- *
- * A two-digit number in a tab-bar badge is unreadable at arm's length and the
- * exact figure has no use anyway — nobody behaves differently for 11 notices than
- * for 30. Standard platform convention, and it keeps the badge from growing wide
- * enough to collide with the tab beside it.
- */
-const BADGE_CAP = 9;
+import AppTabs, { type AppTabDef } from '@/shared/components/app-tabs';
 
 /**
  * Consumer tab bar. Four tabs, each answering one consumer question.
@@ -50,66 +38,50 @@ const BADGE_CAP = 9;
 export default function ConsumerTabs() {
   const unreadNotices = useUnreadNoticeCount();
 
-  return (
-    <AppTabs>
-      <NativeTabs.Trigger name="index">
-        <NativeTabs.Trigger.Label>Home</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf={{ default: 'house', selected: 'house.fill' }} md="home" />
-      </NativeTabs.Trigger>
+  const tabs: AppTabDef[] = [
+    { name: 'index', label: 'Home', sf: { default: 'house', selected: 'house.fill' }, md: 'home', icon: 'home' },
 
-      {/* A wallet, not a document. `doc.text` described the artefact — a bill is a
-          piece of paper — while the tab is opened to answer "what do I owe and have
-          I paid it?", which is a question about money. It also stops colliding with
-          the collector bar's Reports tab, which legitimately is a document.
+    /* A wallet, not a document. `doc.text` described the artefact — a bill is a
+       piece of paper — while the tab is opened to answer "what do I owe and have
+       I paid it?", which is a question about money. It also stops colliding with
+       the collector bar's Reports tab, which legitimately is a document.
 
-          `wallet.pass` rather than `wallet.bifold`: bifold is iOS 17+ and this
-          project's deployment target is 16.4 (ios/Podfile), where it would render
-          as a blank tab. */}
-      <NativeTabs.Trigger name="bills">
-        <NativeTabs.Trigger.Label>Bills</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon
-          sf={{ default: 'wallet.pass', selected: 'wallet.pass.fill' }}
-          md="account_balance_wallet"
-        />
-      </NativeTabs.Trigger>
+       `wallet.pass` rather than `wallet.bifold`: bifold is iOS 17+ and this
+       project's deployment target is 16.4 (ios/Podfile), where it would render as
+       a blank tab. */
+    {
+      name: 'bills',
+      label: 'Bills',
+      sf: { default: 'wallet.pass', selected: 'wallet.pass.fill' },
+      md: 'account_balance_wallet',
+      icon: 'wallet',
+    },
 
-      {/* "Notices", not "Alert" (the old tab) or "Announcements" (the old screen
-          title — the two never agreed). "Alert" over-promises: most of this feed
-          is routine service news, and a tab that cries alert about extended office
-          hours teaches people to ignore it on the day a main breaks. The badge
-          system carries urgency now, so the tab does not have to.
-          "Announcements" is honest but 13 characters and truncates in a tab bar.
-          "Notices" fits, covers interruptions/advisories/updates alike, and is the
-          register a government utility already posts under. */}
-      <NativeTabs.Trigger name="notices">
-        <NativeTabs.Trigger.Label>Notices</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf={{ default: 'bell', selected: 'bell.fill' }} md="notifications" />
-        {/* The red count, and the only badge in either tab bar.
+    /* The badge is the only one in either bar. It is here rather than on the
+       Notices screen because a number that can only be seen by opening the screen
+       it describes has nothing left to tell you once you can see it — the whole
+       job is to be visible from Home on the morning the office posts an
+       interruption. Rendered only when there is something to say: a badge showing
+       0 is a red dot claiming attention for nothing. See notice-unread.ts for what
+       "unread" means, and for what this deliberately is NOT — nothing here reaches
+       a phone whose owner has not opened the app. */
+    {
+      name: 'notices',
+      label: 'Notices',
+      sf: { default: 'bell', selected: 'bell.fill' },
+      md: 'notifications',
+      icon: 'bell',
+      badge: unreadNotices,
+    },
 
-            It is here rather than on the Notices screen itself because a number
-            that can only be seen by opening the screen it describes has nothing
-            left to tell you once you can see it. The whole job is to be visible
-            from Home on the morning the office posts an interruption.
+    {
+      name: 'account',
+      label: 'Account',
+      sf: { default: 'person.circle', selected: 'person.circle.fill' },
+      md: 'account_circle',
+      icon: 'user',
+    },
+  ];
 
-            Rendered only when there is something to say. A badge showing 0 is a
-            red dot claiming attention for nothing, and a tab bar that always has
-            one is a tab bar nobody looks at. See notice-unread.ts for what
-            "unread" means and for what this deliberately is NOT — nothing here
-            reaches a phone whose owner has not opened the app. */}
-        {unreadNotices > 0 && (
-          <NativeTabs.Trigger.Badge>
-            {unreadNotices > BADGE_CAP ? `${BADGE_CAP}+` : String(unreadNotices)}
-          </NativeTabs.Trigger.Badge>
-        )}
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="account">
-        <NativeTabs.Trigger.Label>Account</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon
-          sf={{ default: 'person.circle', selected: 'person.circle.fill' }}
-          md="account_circle"
-        />
-      </NativeTabs.Trigger>
-    </AppTabs>
-  );
+  return <AppTabs tabs={tabs} />;
 }

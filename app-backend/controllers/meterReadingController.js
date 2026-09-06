@@ -82,7 +82,20 @@ exports.sync = async (req, res) => {
    */
   const standing = await MeterReading.resolvePeriod(reading.accountNumber, period);
 
-  const stands = !standing || String(standing._id) === String(reading._id);
+  /**
+   * Compared by `clientId`, not by `_id`.
+   *
+   * A correction no longer always arrives as its own document: where the account
+   * resolves to a service connection, the portal's unique meter-month index forces
+   * it to be merged onto the standing reading instead (see
+   * MeterReading.mergeIntoPeriod). After a merge both readings share one `_id`, so
+   * an `_id` comparison answers "did this row win?" — which is trivially yes —
+   * rather than the question the phone asked, which is "is the reading I just sent
+   * the one you will bill from?". `clientId` is the phone's own name for its
+   * record and survives the merge either way.
+   */
+  const winner = standing || reading;
+  const stands = winner.clientId === req.body.clientId;
 
   res.json({
     reading,

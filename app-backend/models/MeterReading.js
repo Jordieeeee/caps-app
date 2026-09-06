@@ -94,6 +94,45 @@ const meterReadingSchema = new mongoose.Schema(
     /** The portal's rejection flag; `previousReading.js` already filters on it. */
     isRejected: { type: Boolean, default: false },
     rejectionReason: { type: String, default: null },
+
+    /**
+     * Earlier readings of this meter-month, kept because the database will not let
+     * them be rows of their own.
+     *
+     * ⚠️ THIS EXISTS BECAUSE OF AN INDEX THIS SCHEMA DOES NOT DECLARE. The live
+     * collection carries `connectionId_1_period_1` as UNIQUE — added by the portal,
+     * not by us, to stop one meter-month reaching billing twice. `supersededBy` and
+     * `resolvePeriod` below were written on the opposite assumption: that a re-read
+     * lands as a second document and the two are arbitrated afterwards. Both cannot
+     * be true, and the index wins, so every correction a collector filed was
+     * refused at the wire with `E11000 duplicate key` and sat in the phone's outbox
+     * for good.
+     *
+     * So a correction is merged onto the standing document instead, and what it
+     * replaced is recorded here. Nothing the collector measured is discarded: this
+     * is the audit trail `supersededBy` used to provide, in the only shape the
+     * index permits.
+     *
+     * Empty for the ordinary case. A meter read once in a month never has one.
+     */
+    revisions: {
+      type: [
+        {
+          _id: false,
+          clientId: String,
+          collectorId: String,
+          routeId: String,
+          previousReading: Number,
+          currentReading: Number,
+          consumption: Number,
+          readingDate: String,
+          clientTimestamp: Number,
+          /** When this version stopped being the one that stands. */
+          recordedAt: Date,
+        },
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );
@@ -112,6 +151,114 @@ const SUPERSEDED_REASON =
   'Superseded by a later reading of the same meter in the same period.';
 
 /**
+ * Is this the duplicate-key error from the portal's meter-month index?
+ *
+ * Read off `keyPattern` rather than matched against the message string: the index
+ * can be renamed, its fields cannot, and a message match would quietly stop
+ * working the day someone rebuilds it under another name.
+ */
+function isPeriodConflict(error) {
+  if (!error || error.code !== 11000) return false;
+  const key = error.keyPattern || {};
+  return 'connectionId' in key && 'period' in key;
+}
+
+/**
+ * The fields a correction replaces — what the collector measured, and who filed it.
+ *
+ * Review state is deliberately absent. `status`, `isRejected` and `rejectionReason`
+ * belong to the office, and a phone re-sending a reading must not reset a decision
+ * a person already made. Same reasoning as the `$setOnInsert` split below.
+ * `connectionId` and `period` are absent because they are the key being merged on.
+ */
+const MEASUREMENT_FIELDS = [
+  'clientId',
+  'routeId',
+  'collectorId',
+  'accountNumber',
+  'previousReading',
+  'currentReading',
+  'consumption',
+  'readingDate',
+  'notes',
+  'photoUri',
+  'clientTimestamp',
+  'meterId',
+  'consumptionCuM',
+  'source',
+];
+
+/**
+ * Which of two readings of one meter-month stands.
+ *
+ * `clientTimestamp` first, exactly as `resolvePeriod` ranks: it is the phone's
+ * clock at the meter, and the only field that describes when the reading was
+ * TAKEN. `createdAt` is when signal came back and can order a correction before
+ * the thing it corrects, so it is a tiebreak and never the rule; an incoming
+ * reading has none yet, which makes it lose a tie to the record already stored and
+ * keeps the outcome the same however a queue is replayed.
+ */
+function isLaterThan(candidate, incumbent) {
+  const rank = (r) => [
+    r.clientTimestamp || 0,
+    new Date(r.createdAt || 0).getTime(),
+    r.clientId || '',
+  ];
+  const [at, ac, ai] = rank(candidate);
+  const [bt, bc, bi] = rank(incumbent);
+  if (at !== bt) return at > bt;
+  if (ac !== bc) return ac > bc;
+  return ai > bi;
+}
+
+function snapshotOf(source) {
+  return {
+    clientId: source.clientId ?? null,
+    collectorId: source.collectorId ?? null,
+    routeId: source.routeId ?? null,
+    previousReading: source.previousReading ?? null,
+    currentReading: source.currentReading ?? null,
+    consumption: source.consumption ?? null,
+    readingDate: source.readingDate ?? null,
+    clientTimestamp: source.clientTimestamp ?? null,
+    recordedAt: new Date(),
+  };
+}
+
+/**
+ * Fold a correction onto the reading that already holds this meter-month.
+ *
+ * Returns the document that stands afterwards, whichever of the two that is — an
+ * out-of-order arrival is recorded and does NOT take over. Idempotent: replaying a
+ * reading already logged in `revisions` changes nothing and still succeeds, which
+ * is what lets the phone clear it from its outbox.
+ */
+meterReadingSchema.statics.mergeIntoPeriod = async function mergeIntoPeriod(data) {
+  const standing = await this.findOne({
+    connectionId: data.connectionId,
+    period: data.period,
+  });
+  if (!standing) return null;
+
+  if (standing.clientId === data.clientId) return standing;
+  if ((standing.revisions || []).some((r) => r.clientId === data.clientId)) {
+    return standing;
+  }
+
+  if (isLaterThan(data, standing)) {
+    standing.revisions.push(snapshotOf(standing));
+    for (const field of MEASUREMENT_FIELDS) {
+      if (data[field] !== undefined) standing[field] = data[field];
+    }
+  } else {
+    standing.revisions.push(snapshotOf(data));
+  }
+
+  await standing.save();
+  return standing;
+};
+
+/**
  * File a reading from the phone, idempotently on its `clientId`.
  *
  * The review fields are split out of `$set` deliberately. Everything the collector
@@ -124,14 +271,39 @@ const SUPERSEDED_REASON =
 meterReadingSchema.statics.upsertFromClient = async function upsertFromClient(data) {
   const { clientId, ...rest } = data;
 
-  const reading = await this.findOneAndUpdate(
-    { clientId },
-    {
-      $set: { clientId, ...rest },
-      $setOnInsert: { status: 'PENDING', isRejected: false, rejectionReason: null },
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
-  );
+  let reading;
+  try {
+    reading = await this.findOneAndUpdate(
+      { clientId },
+      {
+        $set: { clientId, ...rest },
+        $setOnInsert: { status: 'PENDING', isRejected: false, rejectionReason: null },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
+    );
+  } catch (error) {
+    if (!isPeriodConflict(error)) throw error;
+
+    /**
+     * ⚠️ NO `connectionId`, NO MERGE. THIS GUARD IS NOT OPTIONAL.
+     *
+     * `connectionId_1_period_1` is a plain unique index, so a MISSING field indexes
+     * as null and every reading whose account did not resolve to a service
+     * connection shares one key per period — 47 of the 73 readings in this
+     * collection have no `connectionId` at all. Merging on a null key would fold
+     * two unrelated households' meters into a single document and hand the office a
+     * reading attributed to the wrong address.
+     *
+     * A collision between two unresolved accounts is a different fault with a
+     * different fix (the index wants to be partial), so it is raised rather than
+     * quietly absorbed.
+     */
+    if (!data.connectionId) throw error;
+
+    reading = await this.mergeIntoPeriod(data);
+    // Lost a race with another sync of the same meter-month; the caller may retry.
+    if (!reading) throw error;
+  }
 
   /**
    * Backfill for the readings already in the collection.
