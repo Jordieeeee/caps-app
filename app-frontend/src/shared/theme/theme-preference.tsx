@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Appearance } from 'react-native';
 import {
   createContext,
   useCallback,
@@ -89,6 +90,37 @@ export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  /**
+   * ⚠️ TELL THE PLATFORM, NOT JUST OUR OWN COMPONENTS.
+   *
+   * Every colour in this app is drawn from `twdTheme(scheme)`, so React-rendered
+   * screens follow the preference immediately. UIKit and Android's own chrome do
+   * not: they follow the OS trait collection, which `app.json`'s
+   * `userInterfaceStyle: "automatic"` ties to the phone. Choose Dark in the app on
+   * a phone set to Light and the two disagree — the app goes dark and everything
+   * the platform draws stays light.
+   *
+   * The visible symptom was the iOS tab bar. `NativeTabs` is a real UITabBar, kept
+   * on iOS deliberately because iOS 26 renders it in Liquid Glass (see
+   * shared/components/app-tabs.tsx). That material tints itself from the trait
+   * collection, so on a light trait it renders light glass over dark screens —
+   * and it only appeared to "fix itself" on scroll because UIKit swaps from
+   * `scrollEdgeAppearance` (transparent glass) to `standardAppearance`, which
+   * expo-router does give an explicit `backgroundColor`. Scrolling was not
+   * repairing anything; it was showing a different appearance object.
+   *
+   * `setColorScheme` moves the trait collection itself, so the fix is not local to
+   * the tab bar: native alerts, the keyboard, scroll indicators and text selection
+   * handles all follow the same choice. `'unspecified'` — not `null`, which the
+   * types reject and the runtime does not special-case — hands control back to the
+   * OS, which is what `system` has to mean or it stops tracking the phone's own
+   * day/night schedule. See Appearance.js: that value alone re-reads
+   * `getColorScheme()` from the platform.
+   */
+  useEffect(() => {
+    Appearance.setColorScheme(preference === 'system' ? 'unspecified' : preference);
+  }, [preference]);
 
   const setPreference = useCallback((next: ThemePreference) => {
     // State first, storage second: the toggle must feel instant, and a failed

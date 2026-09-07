@@ -18,6 +18,7 @@ import { useAuth } from '@/shared/auth/auth-context';
 import { Icon } from '@/shared/components/icon';
 import { ListEmpty, ListError } from '@/shared/components/list-states';
 import { SkeletonList } from '@/shared/components/skeleton';
+import { ConfirmDialog } from '@/shared/components/confirm-dialog';
 import { ScreenContainer, ScreenSection } from '@/shared/components/screen-container';
 import { ScreenHeader } from '@/shared/components/screen-header';
 import { AccountStatusBadge, LinkRequestBadge } from '@/shared/components/status-badge';
@@ -695,21 +696,38 @@ function SettingsSection() {
    * collector's alarm here would be theatre, and an app that shouts about
    * everything gets ignored when it shouts about something.
    */
-  const confirmSignOut = () => {
-    // Not "you'll need your email and password": a consumer who signed in with
-    // Google may well not have one, which is the whole subject of the section
-    // above. The wording covers both ways in without naming either.
-    Alert.alert('Sign out?', 'You will need to sign in again to see your bills.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
-    ]);
-  };
+  /**
+   * Declarative, not `Alert.alert`. See shared/components/confirm-dialog.tsx for
+   * why this app draws its own: the native alert is two different dialogs on two
+   * platforms, and this is the most consequential button on the screen.
+   */
+  const [signOutOpen, setSignOutOpen] = useState(false);
 
   // The name/email card that used to sit here is gone: DetailsSection above shows
   // both, sourced from the district's registry rather than from the cached
   // session, and two copies of a name is how they end up disagreeing after an edit.
   return (
     <>
+      {/* Not "you'll need your email and password": a consumer who signed in with
+          Google may well not have one, which is the whole subject of the section
+          above. The wording covers both ways in without naming either. */}
+      <ConfirmDialog
+        visible={signOutOpen}
+        title="Sign out?"
+        body="You will need to sign in again to see your bills."
+        actions={[
+          {
+            label: 'Sign out',
+            variant: 'danger',
+            onPress: () => {
+              setSignOutOpen(false);
+              void signOut();
+            },
+          },
+        ]}
+        onCancel={() => setSignOutOpen(false)}
+      />
+
       <ScreenSection gap={Spacing.two}>
         <ThemedText type="defaultBold">Appearance</ThemedText>
         <ThemeToggle />
@@ -729,7 +747,7 @@ function SettingsSection() {
           label="Sign out"
           icon="log-out"
           variant="danger"
-          onPress={confirmSignOut}
+          onPress={() => setSignOutOpen(true)}
           accessibilityHint="Asks you to confirm before ending your session"
         />
 

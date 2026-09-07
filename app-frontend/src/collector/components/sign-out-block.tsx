@@ -1,11 +1,12 @@
 import { useRouter } from 'expo-router';
-import { useCallback } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { useCallback, useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { SyncService } from '@/collector/services/sync-service';
 import { syncClaim, timeOfDay, type SyncClaim } from '@/collector/services/today';
 import { useAuth } from '@/shared/auth/auth-context';
+import { ConfirmDialog } from '@/shared/components/confirm-dialog';
 import { Icon } from '@/shared/components/icon';
 import { SkeletonBlock } from '@/shared/components/skeleton';
 import { TwdButton } from '@/shared/components/twd-button';
@@ -61,6 +62,22 @@ export function SignOutBlock() {
   const claim: SyncClaim | null = state.status === 'ready' ? syncClaim(state.data) : null;
   const onRetry = reload;
 
+  /**
+   * Two dialogs, one component. See shared/components/confirm-dialog.tsx.
+   *
+   * The simple case is a binary and renders as a row. The at-risk case adds a
+   * third choice — a way to go and sync instead of losing the work — and the
+   * dialog stacks the buttons for it, because "Sign out anyway" truncates in a
+   * three-across row and this is the one screen in the app where misreading a
+   * button destroys a collector's day.
+   *
+   * ⚠️ ABOVE THE LOADING EARLY-RETURN, DELIBERATELY. This component returns a
+   * skeleton while the sync claim loads; a hook declared after that return is
+   * skipped on those renders, which changes hook order between renders and is
+   * exactly what `react-hooks/rules-of-hooks` catches.
+   */
+  const [open, setOpen] = useState(false);
+
   if (state.status === 'loading') {
     return (
       <View style={styles.signOutSection}>
@@ -82,31 +99,61 @@ export function SignOutBlock() {
         ? '1 record hasn’t reached TWD.'
         : `${count} records haven’t reached TWD.`;
 
-  const confirmSignOut = () => {
-    if (!atRisk && claim?.kind === 'sent') {
-      Alert.alert('Sign out?', "You'll need a connection to sign back in.", [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
-      ]);
-      return;
-    }
+  const safe = !atRisk && claim?.kind === 'sent';
 
-    // The count is repeated here on purpose. The block above is glanceable; this is
-    // the last moment before the work is gone, and it should be impossible to
-    // dismiss without having read the number.
-    Alert.alert(
-      count !== null ? `Sign out and lose ${count} record${count === 1 ? '' : 's'}?` : 'Sign out and lose unsent work?',
-      `${countPhrase}\n\nSigning out clears this phone's session and those records with it. They cannot be recovered. Connect to the internet and sync first if you can.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Go to Sync', onPress: () => router.push('/collector/more/sync-status') },
-        { text: 'Sign out anyway', style: 'destructive', onPress: () => void signOut() },
-      ]
-    );
-  };
+  // The count is repeated in the body on purpose. The block above is glanceable;
+  // this is the last moment before the work is gone, and it should be impossible
+  // to dismiss without having read the number.
+  const dialog = safe
+    ? {
+        title: 'Sign out?',
+        body: "You'll need a connection to sign back in.",
+        actions: [
+          {
+            label: 'Sign out',
+            variant: 'danger' as const,
+            onPress: () => {
+              setOpen(false);
+              void signOut();
+            },
+          },
+        ],
+      }
+    : {
+        title:
+          count !== null
+            ? `Sign out and lose ${count} record${count === 1 ? '' : 's'}?`
+            : 'Sign out and lose unsent work?',
+        body: `${countPhrase}\n\nSigning out clears this phone's session and those records with it. They cannot be recovered. Connect to the internet and sync first if you can.`,
+        actions: [
+          {
+            label: 'Go to Sync',
+            variant: 'primary' as const,
+            onPress: () => {
+              setOpen(false);
+              router.push('/collector/more/sync-status');
+            },
+          },
+          {
+            label: 'Sign out anyway',
+            variant: 'danger' as const,
+            onPress: () => {
+              setOpen(false);
+              void signOut();
+            },
+          },
+        ],
+      };
 
   return (
     <View style={styles.signOutSection}>
+      <ConfirmDialog
+        visible={open}
+        title={dialog.title}
+        body={dialog.body}
+        actions={dialog.actions}
+        onCancel={() => setOpen(false)}
+      />
       {atRisk ? (
         <Pressable
           onPress={claim === null ? onRetry : () => router.push('/collector/more/sync-status')}
@@ -146,7 +193,7 @@ export function SignOutBlock() {
         label="Sign out"
         icon="log-out"
         variant="danger"
-        onPress={confirmSignOut}
+        onPress={() => setOpen(true)}
         accessibilityHint="Asks you to confirm before ending your session on this device"
       />
     </View>

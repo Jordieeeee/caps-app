@@ -28,6 +28,10 @@ export default function ConsumerNoticesLayout() {
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="feedback" options={{ title: 'Send feedback' }} />
       <Stack.Screen name="feedback-history" options={{ title: 'Your feedback' }} />
+      {/* The notice's own title would be better here, but the header is configured
+          before the notice is fetched — and a header that starts blank and fills in
+          is worse than one that is simply the category. */}
+      <Stack.Screen name="[id]" options={{ title: 'Notice' }} />
     </Stack>
   );
 }

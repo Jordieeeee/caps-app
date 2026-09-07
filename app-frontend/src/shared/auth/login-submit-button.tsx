@@ -41,6 +41,11 @@ import { MIN_TAP_TARGET, Radius } from '@/shared/theme/twd';
  * tried first and why both were withdrawn.
  */
 
+/** Dimmed state of an inactive dot. Matches the reference: visible, not hidden. */
+const DOT_REST = 0.32;
+/** One beat. Three beats to a lap, so the emphasis visits each dot once. */
+const STEP = 260;
+
 const ENTER = Easing.bezier(0.22, 1, 0.36, 1);
 const EXIT = Easing.bezier(0.64, 0, 0.78, 0);
 
@@ -70,7 +75,16 @@ export function LoginSubmitButton({
   const collapse = useSharedValue(0);
   /** Label fade, run ahead of the collapse so nothing is squashed mid-fade. */
   const labelOut = useSharedValue(0);
-  const pulse = useSharedValue(0);
+  /**
+   * One shared value per dot, so the emphasis can TRAVEL across them.
+   *
+   * Three dots driven by a single value would all move together, which reads as a
+   * throb rather than as progress. Separate values offset by `STAGGER` give the
+   * travelling wave in the reference: one dot lit, the next taking over.
+   */
+  const d0 = useSharedValue(DOT_REST);
+  const d1 = useSharedValue(DOT_REST);
+  const d2 = useSharedValue(DOT_REST);
 
   useEffect(() => {
     if (reduceMotion) {
@@ -78,39 +92,62 @@ export function LoginSubmitButton({
       // works end to end, which is the requirement — motion is not the message.
       collapse.value = 0;
       labelOut.value = busy ? 1 : 0;
-      pulse.value = 0;
+      d0.value = DOT_REST;
+      d1.value = DOT_REST;
+      d2.value = DOT_REST;
       return;
     }
     if (busy) {
       labelOut.value = withTiming(1, { duration: 160, easing: EXIT });
       collapse.value = withDelay(120, withTiming(1, { duration: 300, easing: ENTER }));
-      // Indefinite and symmetric. `-1` repeats forever; `true` reverses, so the
-      // mark breathes rather than restarting from a jump every cycle.
-      pulse.value = withRepeat(
-        withSequence(
-          withTiming(1, { duration: 620, easing: ENTER }),
-          withTiming(0, { duration: 620, easing: ENTER })
-        ),
-        -1,
-        true
-      );
+      /**
+       * The travelling wave. Each dot rises, falls, then rests for the two beats
+       * its neighbours are using — so one cycle is 3 × STEP and the emphasis lands
+       * on each dot exactly once per lap.
+       *
+       * `withDelay` offsets each dot by one beat. `-1` repeats forever and the
+       * loop is indefinite by construction: nothing here knows or cares how long
+       * the request takes, which is the requirement — a 5s response looks the same
+       * as a 500ms one.
+       */
+      const wave = (v: typeof d0, beat: number) => {
+        v.value = withDelay(
+          beat * STEP,
+          withRepeat(
+            withSequence(
+              withTiming(1, { duration: STEP, easing: ENTER }),
+              withTiming(DOT_REST, { duration: STEP, easing: EXIT }),
+              withTiming(DOT_REST, { duration: STEP })
+            ),
+            -1,
+            false
+          )
+        );
+      };
+      wave(d0, 0);
+      wave(d1, 1);
+      wave(d2, 2);
       return;
     }
     // Back to idle. Restrained, and no shake: an error is explained in words next
     // to the field, not performed at the user.
-    cancelAnimation(pulse);
-    pulse.value = withTiming(0, { duration: 200, easing: EXIT });
+    for (const v of [d0, d1, d2]) {
+      cancelAnimation(v);
+      v.value = withTiming(DOT_REST, { duration: 200, easing: EXIT });
+    }
     collapse.value = withTiming(0, { duration: 320, easing: ENTER });
     labelOut.value = withDelay(140, withTiming(0, { duration: 220, easing: ENTER }));
-  }, [busy, reduceMotion, collapse, labelOut, pulse]);
+  }, [busy, reduceMotion, collapse, labelOut, d0, d1, d2]);
 
   useEffect(
     () => () => {
       cancelAnimation(collapse);
       cancelAnimation(labelOut);
-      cancelAnimation(pulse);
+      cancelAnimation(d0);
+      cancelAnimation(d1);
+      cancelAnimation(d2);
     },
-    [collapse, labelOut, pulse]
+    [collapse, labelOut, d0, d1, d2]
   );
 
 
@@ -153,10 +190,22 @@ export function LoginSubmitButton({
     transform: [{ translateY: 6 * labelOut.value }],
   }));
 
-  const markStyle = useAnimatedStyle(() => ({
-    opacity: collapse.value * (0.55 + 0.45 * pulse.value),
-    transform: [{ scale: (0.94 + 0.06 * pulse.value) * collapse.value }],
+  /**
+   * The dots carry OPACITY ONLY; the row carries the one transform.
+   *
+   * Three dots each scaling would be three transformed elements at once, past the
+   * two the brief allows — and it would not match the reference anyway, where the
+   * dots are all the same size and differ only in weight. So the group scales in
+   * once as the label leaves (opacity paired with a transform, as required) and
+   * the emphasis inside it is pure opacity.
+   */
+  const rowStyle = useAnimatedStyle(() => ({
+    opacity: collapse.value,
+    transform: [{ scale: 0.94 + 0.06 * collapse.value }],
   }));
+  const dot0 = useAnimatedStyle(() => ({ opacity: d0.value }));
+  const dot1 = useAnimatedStyle(() => ({ opacity: d1.value }));
+  const dot2 = useAnimatedStyle(() => ({ opacity: d2.value }));
 
   return (
     <Pressable
@@ -181,10 +230,12 @@ export function LoginSubmitButton({
           </ThemedText>
         </Animated.View>
         <Animated.View
-          style={[StyleSheet.absoluteFill, styles.centre]}
+          style={[StyleSheet.absoluteFill, styles.centre, styles.row, rowStyle]}
           pointerEvents="none"
           accessibilityElementsHidden>
-          <Animated.View style={[styles.mark, { backgroundColor: theme.onPrimary }, markStyle]} />
+          <Animated.View style={[styles.dot, { backgroundColor: theme.onPrimary }, dot0]} />
+          <Animated.View style={[styles.dot, { backgroundColor: theme.onPrimary }, dot1]} />
+          <Animated.View style={[styles.dot, { backgroundColor: theme.onPrimary }, dot2]} />
         </Animated.View>
       </View>
     </Pressable>
@@ -205,5 +256,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  mark: { width: 10, height: 10, borderRadius: 5 },
+  row: { flexDirection: 'row', gap: 8 },
+  dot: { width: 9, height: 9, borderRadius: 4.5 },
 });

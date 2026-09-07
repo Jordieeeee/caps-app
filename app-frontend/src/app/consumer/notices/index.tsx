@@ -443,41 +443,66 @@ function FeedbackRow({
  */
 function NoticeCard({ notice }: { notice: Notice }) {
   const theme = useTwdTheme();
+  const router = useRouter();
   const accent = useToneColor(noticeTone(notice.priority));
   const urgent = notice.priority === 'high';
 
   return (
-    <ThemedView
-      type="backgroundElement"
-      style={[styles.card, { borderColor: accent, borderWidth: urgent ? 3 : 2 }]}
-      accessible
-      accessibilityRole="summary">
-      <View style={styles.headerText}>
-        <NoticeBadge type={notice.type} priority={notice.priority} />
-        <ThemedText type="defaultBold" style={styles.cardTitle}>
-          {notice.title}
-        </ThemedText>
-      </View>
+    <Pressable
+      onPress={() => router.push(`/consumer/notices/${notice.id}`)}
+      accessibilityRole="button"
+      /**
+       * The whole card is the target, not a "Read more" link in the corner.
+       * A notice is one thing, and the district's most urgent ones are read at a
+       * glance in poor light — a 44pt link inside a 200pt card is a smaller target
+       * for no benefit. `accessibilityRole` moves from `summary` to `button`
+       * because the card now does something when activated, and a screen reader
+       * that still announced it as a summary would not offer the activation.
+       */
+      accessibilityLabel={`${notice.title}. Posted ${formatDate(notice.date)}.`}
+      accessibilityHint="Opens the full notice"
+      style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}>
+      <ThemedView
+        type="backgroundElement"
+        style={[styles.card, { borderColor: accent, borderWidth: urgent ? 3 : 2 }]}>
+        <View style={styles.headerText}>
+          <NoticeBadge type={notice.type} priority={notice.priority} />
+          <ThemedText type="defaultBold" style={styles.cardTitle}>
+            {notice.title}
+          </ThemedText>
+        </View>
 
-      <ThemedText type="small" style={styles.content}>
-        {notice.content}
-      </ThemedText>
-
-      <View style={[styles.footer, { borderTopColor: theme.border }]}>
-        <Icon name="calendar" size={14} color={theme.textSecondary} />
-        {/* Through formatDate like every other date in the app. This printed
-            `notice.date` raw, so a card read "Posted 2026-08-08T08:14:34.681Z" —
-            the machine timestamp the module note at the top of shared/format/date.ts
-            exists to keep off a consumer's screen. */}
-        <ThemedText type="small" themeColor="textSecondary">
-          Posted {formatDate(notice.date)}
+        {/*
+          Clamped to three lines, which is what makes the detail screen worth
+          opening. Unclamped, a long advisory pushed every notice beneath it off
+          the screen — and the list's job is to let someone see that four things
+          were posted, not to be four documents stacked end to end.
+        */}
+        <ThemedText type="small" style={styles.content} numberOfLines={3}>
+          {notice.content}
         </ThemedText>
-      </View>
-    </ThemedView>
+
+        <View style={[styles.footer, { borderTopColor: theme.border }]}>
+          <Icon name="calendar" size={14} color={theme.textSecondary} />
+          {/* Through formatDate like every other date in the app. This printed
+              `notice.date` raw, so a card read "Posted 2026-08-08T08:14:34.681Z" —
+              the machine timestamp the module note at the top of shared/format/date.ts
+              exists to keep off a consumer's screen. */}
+          <ThemedText type="small" themeColor="textSecondary" style={styles.flex}>
+            Posted {formatDate(notice.date)}
+          </ThemedText>
+          {/* The affordance. Same chevron the two feedback rows above use, so
+              "this card opens something" is one visual idea on this screen rather
+              than two. Decorative — the accessibility hint already says it. */}
+          <Icon name="chevron-right" size={16} color={theme.textSecondary} />
+        </View>
+      </ThemedView>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   feedbackRow: {
     flexDirection: 'row',
     alignItems: 'center',
