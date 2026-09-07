@@ -4,7 +4,7 @@
     "slug": "app-frontend",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/app-icon.png",
     "scheme": [
       "appfrontend",
       "com.googleusercontent.apps.822086134232-t3lq8dg9mfe36qv4skce5c2i06rotdk6",
@@ -12,11 +12,12 @@
     ],
     "userInterfaceStyle": "automatic",
     "ios": {
-      "bundleIdentifier": "com.anonymous.app-frontend"
+      "bundleIdentifier": "com.anonymous.app-frontend",
+      "appleTeamId": "WHRX53MMJM"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -37,12 +38,12 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#FFFFFF",
-          "image": "./assets/images/twd-splash.png",
+          "image": "./assets/images/twa-splash.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#0B1B2B",
-            "image": "./assets/images/twd-splash.png",
+            "backgroundColor": "#000000",
+            "image": "./assets/images/twa-splash.png",
             "imageWidth": 200,
             "resizeMode": "contain"
           }

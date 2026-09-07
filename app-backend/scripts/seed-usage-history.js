@@ -98,15 +98,23 @@ function periodsEndingAt(latest, count) {
   return out;
 }
 
-/** Meters are read near the end of the period; bills fall due mid-next-month.
- *  Both mirror the dates on the portal's own test bills. */
+/**
+ * The district's billing cycle: read on the 22nd, payable on the 7th of the month
+ * after. Kept in step with app-frontend/src/shared/utils/billing-cycle.ts, which is
+ * where the same two days drive the consumer calendar and the collector's receipt.
+ *
+ * Was the 28th and the 12th, taken from the portal's early test bills before the
+ * cycle was pinned down. `Date.UTC(y, m, 7)` is already the following month because
+ * `m` is one past the period's zero-based index, and it rolls a December period into
+ * January on its own.
+ */
 function readingDate(period) {
   const [y, m] = period.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, 28));
+  return new Date(Date.UTC(y, m - 1, 22));
 }
 function dueDate(period) {
   const [y, m] = period.split('-').map(Number);
-  return new Date(Date.UTC(y, m, 12));
+  return new Date(Date.UTC(y, m, 7));
 }
 
 /**

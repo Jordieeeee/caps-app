@@ -2,7 +2,8 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as WebBrowser from 'expo-web-browser';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { LoginTransition } from '@/shared/auth/login-transition';
+import { AppIntro } from '@/shared/components/app-intro';
 import { AuthProvider, useAuth } from '@/shared/auth/auth-context';
 import { ScreenLoading } from '@/shared/components/screen-message';
 import {
@@ -122,28 +123,55 @@ export default function RootLayout() {
       <NavigationTheme>
         <AuthProvider>
           <RootNavigator />
+          {/**
+           * ⚠️ LAST, NOT FIRST. IT UNMOUNTS ITSELF, AND ORDER DECIDES WHAT THAT COSTS.
+           *
+           * The overlay returns null once its animation finishes. As the FIRST child
+           * that removal shifted the navigator's index from 1 to 0, and Fabric
+           * answers an index shift by moving the existing views into a newly-created
+           * parent — which Android rejects with `addViewAt: … The specified child
+           * already has a parent`. Removing the LAST child shifts nobody.
+           *
+           * Costs nothing visually: the overlay is `position: absolute` with
+           * `zIndex: 1000` (see app-intro.tsx), so it covers the app either way,
+           * and being last is if anything the more honest way to say "on top".
+           *
+           * Same defect, same fix, as the offline banner in collector/_layout.tsx —
+           * that one could not be reordered because it genuinely occupies space, so
+           * it keeps an always-mounted slot instead.
+           *
+           * ⚠️ IT MOVED INSIDE AuthProvider, and that is load-bearing. The intro
+           * exits on real boot work resolving, which means it has to read the auth
+           * status; outside the provider it could only have been paced by a timer,
+           * which is the thing this sequence is built not to do.
+           */}
+          {/* Below IntroGate in z-order (zIndex 900 vs 1000) so a cold start that
+              lands on the login screen cannot show the sign-in transition through
+              the intro. Both survive the `(auth)` unmount because both live here,
+              above the navigator, rather than on the screen that goes away. */}
+          <LoginTransition />
+          <IntroGate />
         </AuthProvider>
-        {/**
-         * ⚠️ LAST, NOT FIRST. IT UNMOUNTS ITSELF, AND ORDER DECIDES WHAT THAT COSTS.
-         *
-         * The overlay returns null once its animation finishes. As the FIRST child
-         * that removal shifted the navigator's index from 1 to 0, and Fabric
-         * answers an index shift by moving the existing views into a newly-created
-         * parent — which Android rejects with `addViewAt: … The specified child
-         * already has a parent`. Removing the LAST child shifts nobody.
-         *
-         * Costs nothing visually: the overlay is `position: absolute` with
-         * `zIndex: 1000` (see animated-icon.tsx), so it covers the app either way,
-         * and being last is if anything the more honest way to say "on top".
-         *
-         * Same defect, same fix, as the offline banner in collector/_layout.tsx —
-         * that one could not be reordered because it genuinely occupies space, so
-         * it keeps an always-mounted slot instead.
-         */}
-        <AnimatedSplashOverlay />
       </NavigationTheme>
     </ThemePreferenceProvider>
   );
+}
+
+/**
+ * Bridges auth state to the intro's single input.
+ *
+ * `restoring` is the whole of this app's cold-start boot work: NetInfo's first
+ * connectivity answer, the SecureStore session read, and — only when online with a
+ * stale token — one refresh call. When it clears, the navigator below has already
+ * rendered the real first screen, which is what the intro uncovers.
+ *
+ * Deliberately its own component. Reading `useAuth` in RootLayout would re-render
+ * the entire tree, providers included, on every auth transition; here the re-render
+ * stops at this leaf and the intro's own animation never depends on it.
+ */
+function IntroGate() {
+  const { state } = useAuth();
+  return <AppIntro ready={state.status !== 'restoring'} />;
 }
 
 /** Reads the resolved scheme, so it must sit inside the provider above. */

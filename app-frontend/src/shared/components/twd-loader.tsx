@@ -5,7 +5,7 @@ import { AccessibilityInfo, Animated, Easing, StyleSheet, View } from 'react-nat
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
 
 /**
- * The district's seal, held still, inside a ring that turns.
+ * The app's mark, held still, inside a ring that turns.
  *
  * Motion in this app means exactly one thing — the app is working on it — which
  * is the same rule the offline banner follows by deliberately NOT animating.
@@ -16,9 +16,14 @@ import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
  * one carries the district's name; it is the reason a consumer knows whose app
  * asked them to wait. Only the ring moves, which is also why the ring is drawn
  * separately rather than being part of the image.
+ *
+ * Sized from `twa-logo`, which ships at 1x/2x/3x. The largest this is drawn is
+ * 44pt (76 × 0.58 from screen-message), so the 288px @3x covers it with room
+ * spare — it used to load the 1024px app icon, over a megabyte of bitmap to
+ * paint a mark smaller than a thumbnail, on the loading screen of all places.
  */
 
-const TWD_MARK = require('../../../assets/images/icon.png');
+const TWD_MARK = require('../../../assets/images/twa-logo.png');
 
 export function TwdLoader({
   size = 72,

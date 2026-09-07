@@ -1,4 +1,5 @@
 import { apiFetch } from '@/shared/services/api-client';
+import { dueDateForPeriod, dueDateInMonthOf } from '@/shared/utils/billing-cycle';
 import type {
   Account,
   AccountLinkRequest,
@@ -32,9 +33,45 @@ export async function listAccounts(): Promise<Account[]> {
   return accounts;
 }
 
+/**
+ * Every due date this app shows is the district's own due day, not the day the
+ * bill happens to carry.
+ *
+ * ⚠️ THIS DELIBERATELY OVERRIDES THE SERVER. TWD's cycle is a fixed calendar day
+ * — the 7th of the month after the period — and the district quotes that date at
+ * the counter. The portal's stored `dueDate` predates the cycle being pinned down
+ * and still holds whatever its billing run stamped (the 12th, the 14th), so a bill
+ * would otherwise show a date nobody at the office would recognise.
+ *
+ * Normalised HERE, at the boundary, rather than at the seven places a due date is
+ * rendered. Every screen, the calendar, the sort order in `bill-summary` and the
+ * client-side "due in N days" all read the same field, so doing it once is what
+ * stops them disagreeing — and there is no path by which a raw server due date
+ * reaches the UI.
+ *
+ * Anchored on `billingPeriod`, not on the stored date's own month: the period is
+ * what the district bills against. `dueDateInMonthOf` is the fallback for a bill
+ * whose period is missing or malformed, which keeps the day right even when the
+ * anchor is not.
+ *
+ * ⚠️ CONSEQUENCE, AND IT IS NOT COSMETIC: the 7th is EARLIER than the dates the
+ * portal has been stamping, so a bill can read as overdue here while the server
+ * still calls it pending. `summarise` treats either signal as overdue (see
+ * bill-summary.ts), so the app now leans early. That is the safer direction — it
+ * asks a household for money sooner than TWD would, never later — but it is a
+ * disagreement with the portal, and it goes away only when the portal's billing
+ * run issues on the 7th too.
+ */
+function onDistrictDueDate(bill: Bill): Bill {
+  const due = /^\d{4}-\d{2}$/.test(bill.billingPeriod)
+    ? dueDateForPeriod(bill.billingPeriod)
+    : dueDateInMonthOf(bill.dueDate);
+  return bill.dueDate === due ? bill : { ...bill, dueDate: due };
+}
+
 export async function listBills(): Promise<Bill[]> {
   const { bills } = await apiFetch<{ bills: Bill[] }>('/billing');
-  return bills;
+  return bills.map(onDistrictDueDate);
 }
 
 export async function listNotices(): Promise<Notice[]> {
@@ -59,7 +96,20 @@ export async function listNotices(): Promise<Notice[]> {
  */
 export async function listNotifications(): Promise<Notification[]> {
   const { notifications } = await apiFetch<{ notifications: Notification[] }>('/notifications');
-  return notifications;
+  return notifications.map(onDistrictDueDay);
+}
+
+/**
+ * The same override as `onDistrictDueDate`, for a notification.
+ *
+ * A due reminder carries no billing period, so the month of the date it arrived
+ * with is the only anchor available — the day is what gets corrected. Null stays
+ * null: a notification with no due date must not acquire one here.
+ */
+function onDistrictDueDay(n: Notification): Notification {
+  if (n.dueDate === null) return n;
+  const due = dueDateInMonthOf(n.dueDate);
+  return n.dueDate === due ? n : { ...n, dueDate: due };
 }
 
 /**
@@ -74,7 +124,9 @@ export async function markNotificationRead(id: string): Promise<Notification> {
     `/notifications/${encodeURIComponent(id)}/read`,
     { method: 'PATCH' }
   );
-  return notification;
+  // Same normalisation as the list it will replace a row in — otherwise marking
+  // one as read is enough to make its due date jump back to the server's.
+  return onDistrictDueDay(notification);
 }
 
 /**

@@ -35,8 +35,16 @@ const PERIOD = '2026-09';
 /** The 2026-09-04 reading (clientId rdg-mtmid3na-9ggheg7o-001) this bill charges for. */
 const READING_ID = '6a9a55cb3ef6b109c0a96352';
 const CURRENT_READING = 150;
-/** The 14th of the month after the period, matching the August bill's own due date. */
-const DUE_DATE = new Date('2026-10-14T00:00:00.000Z');
+/**
+ * The 7th of the month after the period — the district's fixed due day.
+ *
+ * Was the 14th, copied from the August bill. The cycle is a published calendar
+ * day now (see app-frontend/src/shared/utils/billing-cycle.ts): meters are read
+ * on the 22nd, and what they bill is payable on the 7th of the month after. A
+ * seeded bill on any other day would put the app's schedule marks and its own
+ * test data in disagreement.
+ */
+const DUE_DATE = new Date('2026-10-07T00:00:00.000Z');
 
 /**
  * The check digit the portal's bill numbers carry: Luhn over the digits of

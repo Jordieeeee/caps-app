@@ -1,6 +1,8 @@
 import { Image } from 'expo-image';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -16,9 +18,11 @@ import { MaxContentWidth } from '@/constants/theme';
 import { useAuth } from '@/shared/auth/auth-context';
 import { GoogleSignInPanel, OrDivider } from '@/shared/auth/google-sign-in-panel';
 import { useGoogleSignIn } from '@/shared/auth/use-google-sign-in';
+import { registerIntroTarget } from '@/shared/components/app-intro';
+import { LoginSubmitButton, announce } from '@/shared/auth/login-submit-button';
+import { markSubmitStart } from '@/shared/auth/login-transition';
 import { PasswordRevealToggle } from '@/shared/components/password-reveal-toggle';
 import { ScreenMessage } from '@/shared/components/screen-message';
-import { TwdButton } from '@/shared/components/twd-button';
 import { TwdTextField } from '@/shared/components/twd-text-field';
 import { useConnectivity } from '@/shared/hooks/use-connectivity';
 import { useTwdTheme } from '@/shared/hooks/use-twd-theme';
@@ -47,6 +51,27 @@ export function LoginScreen() {
   const passwordRef = useRef<TextInput>(null);
 
   const [email, setEmail] = useState('');
+  // Held for measureInWindow only; never read during render.
+  const logoRef = useRef<View>(null);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((on) => alive && setReduceMotion(on));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  /**
+   * ⚠️ THE DOUBLE-SUBMIT GUARD, AND IT HAS TO BE A REF.
+   *
+   * `busy` comes from auth context and only becomes true once React has processed
+   * `dispatch({type:'authenticating'})`. Two taps inside one tick both read the
+   * stale `false` and both fire a request — the disabled prop cannot help, because
+   * the re-render that disables the button has not happened yet. A ref flips
+   * synchronously on the first tap, so the second returns before it can reach the
+   * network.
+   */
+  const inFlight = useRef(false);
   const [password, setPassword] = useState('');
   const [passwordRevealed, setPasswordRevealed] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
@@ -101,9 +126,28 @@ export function LoginScreen() {
   }
 
   async function attemptSignIn() {
+    if (inFlight.current) return;
     setFormError(null);
     if (!validate()) return;
 
+    /**
+     * Dismiss BEFORE the request, not alongside the transition.
+     *
+     * The keyboard is open when submit is tapped and its dismissal is itself an
+     * animation. Firing it at the same moment as the success motion puts two
+     * uncoordinated animations on one surface — on Android the content shifts up
+     * as the inset collapses, which lands in the middle of the transition. Doing
+     * it here means the dismissal is over long before the response arrives (the
+     * request is the slow part), so the two never overlap.
+     *
+     * No listener is needed for the same reason: nothing waits on it. If this ever
+     * has to be sequenced, iOS emits `keyboardWillHide` and Android only
+     * `keyboardDidHide` — they are not interchangeable.
+     */
+    Keyboard.dismiss();
+
+    inFlight.current = true;
+    markSubmitStart();
     try {
       await signIn(email, password);
       // On success the root layout's guards swap the navigator for us — this
@@ -113,6 +157,10 @@ export function LoginScreen() {
       const message =
         error instanceof Error ? error.message : 'Something went wrong. Please try again.';
       setFormError({ code, message });
+      // `accessibilityLiveRegion` on the banner covers Android; iOS VoiceOver
+      // needs to be told explicitly, and an error the user cannot hear is an
+      // error they will retype blind.
+      announce(message);
       if (code === AuthErrorCode.INVALID_CREDENTIALS) {
         setPassword('');
         // Re-mask on a rejected attempt. The cleared field is about to be retyped,
@@ -120,6 +168,10 @@ export function LoginScreen() {
         // password on screen without the user having asked for it again.
         setPasswordRevealed(false);
       }
+    } finally {
+      // Every exit path, including a timeout: the button must never be left
+      // disabled with no way forward.
+      inFlight.current = false;
     }
   }
 
@@ -161,13 +213,29 @@ export function LoginScreen() {
             keyboardDismissMode="on-drag">
             <View style={styles.content}>
               <View style={styles.header}>
-                <Image
-                  source={require('@/assets/images/icon.png')}
+                {/* Where the intro's mark flies to. `measureInWindow`, not
+                    onLayout's local rect: this badge sits inside a ScrollView
+                    inside a SafeAreaView, so its layout-relative box says nothing
+                    about where it actually is on screen. It runs while the intro
+                    overlay is still fully opaque, so the measurement is ready
+                    before the travel begins and costs no frame in the sequence.
+                    See shared/components/app-intro.tsx. */}
+                <View
+                  ref={logoRef}
                   style={styles.logo}
-                  contentFit="contain"
-                  accessibilityIgnoresInvertColors
-                  accessibilityLabel="Tanauan City Water District seal"
-                />
+                  onLayout={() => {
+                    logoRef.current?.measureInWindow((x, y, w) => {
+                      if (w > 0) registerIntroTarget(x, y, w);
+                    });
+                  }}>
+                  <Image
+                    source={require('@/assets/images/twa-logo.png')}
+                    style={styles.logoImage}
+                    contentFit="contain"
+                    accessibilityIgnoresInvertColors
+                    accessibilityLabel="Tanauan Water App logo"
+                  />
+                </View>
                 <ThemedText type="subtitle" style={styles.centered}>
                   Tanauan City{'\n'}Water District
                 </ThemedText>
@@ -269,14 +337,15 @@ export function LoginScreen() {
                     The route file at app/(auth)/forgot-password.tsx is left in
                     place, unlinked, exactly as /enroll is. */}
 
-                <TwdButton
-                  label="Sign in"
-                  busyLabel="Signing in…"
-                  busy={busy}
-                  onPress={() => void attemptSignIn()}
-                  style={styles.submit}
-                  accessibilityHint="Signs you in to your Tanauan City Water District account"
-                />
+                <View style={styles.submit}>
+                  <LoginSubmitButton
+                    label="Sign in"
+                    busyLabel="Signing in…"
+                    phase={busy ? 'submitting' : 'idle'}
+                    reduceMotion={reduceMotion}
+                    onPress={() => void attemptSignIn()}
+                  />
+                </View>
               </View>
 
               {/* Google sits BELOW the password form, deliberately.
@@ -402,6 +471,7 @@ const styles = StyleSheet.create({
     width: 96,
     height: 96,
   },
+  logoImage: { width: '100%', height: '100%' },
   centered: { textAlign: 'center' },
   form: { gap: Spacing.three },
   submit: { marginTop: Spacing.two },

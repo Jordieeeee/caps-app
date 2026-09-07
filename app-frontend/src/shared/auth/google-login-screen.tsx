@@ -53,11 +53,11 @@ export function GoogleLoginScreen({
           <View style={[styles.content, { maxWidth: MaxContentWidth }]}>
             <View style={styles.header}>
               <Image
-                source={require('@/assets/images/icon.png')}
+                source={require('@/assets/images/twa-logo.png')}
                 style={styles.logo}
                 contentFit="contain"
                 accessibilityIgnoresInvertColors
-                accessibilityLabel="Tanauan City Water District seal"
+                accessibilityLabel="Tanauan Water App logo"
               />
               <ThemedText type="subtitle" style={styles.centered}>
                 Tanauan City{'\n'}Water District

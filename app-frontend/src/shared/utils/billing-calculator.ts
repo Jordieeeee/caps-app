@@ -1,4 +1,5 @@
 import { formatAmount } from '@/shared/format/currency';
+import { dueDateForPeriod } from '@/shared/utils/billing-cycle';
 
 /**
  * Billing arithmetic and receipt layout for the collector's meter-reading flow.
@@ -36,9 +37,12 @@ export const UTILITY_ADDRESS = 'Tanauan City, Batangas';
 /** The PT-210 prints 32 characters per line at Font A on 58mm paper. */
 export const RECEIPT_WIDTH = 32;
 
-/** Days between reading date and due date. */
-// TODO: Confirm TWD's actual payment window.
-export const DUE_DAYS = 15;
+// The payment window is no longer a number of days — see `shared/utils/billing-cycle`.
+//
+// `DUE_DAYS = 15` used to live here and was added to the reading date. It is gone
+// rather than deprecated because an offset and a fixed calendar day cannot both be
+// right, and leaving the constant exported would invite a second call site to keep
+// computing the old answer.
 
 /**
  * `Government` is the third value the Account schema allows and the receipt has
@@ -293,11 +297,19 @@ export function invoiceNumberFor(accountNumber: string, readingDate: string): st
   return `${accountNumber}-${readingDate.replace(/-/g, '')}`;
 }
 
-/** `2025-07-17` → `2025-08-01` at DUE_DAYS = 15. */
+/**
+ * `2026-08-22` → `2026-09-07`: the 7th of the month after the period being billed.
+ *
+ * Keyed off the reading's PERIOD, not off the reading's day, and that is what makes
+ * it agree with the two lines printed either side of it on the receipt.
+ * `billingPeriodFor` below derives the period the same way — `readingDate.slice(0, 7)`
+ * — so a receipt can no longer say "Billing Period: August 2026" above a due date
+ * computed from an unrelated arithmetic. A meter read off-cycle on 3 August still
+ * bills to August and is still payable by 7 September, which is the answer the
+ * office gives over the counter.
+ */
 export function dueDateFor(readingDate: string): string {
-  const d = new Date(`${readingDate}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + DUE_DAYS);
-  return d.toISOString().split('T')[0];
+  return dueDateForPeriod(readingDate.slice(0, 7));
 }
 
 /**
